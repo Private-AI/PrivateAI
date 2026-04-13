@@ -16,11 +16,42 @@ export const API_URL =
 
 export const WS_URL = API_URL.replace(/^http/, "ws");
 
+const V1 = "/api/v1";
+
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
 
 async function request<T>(
+  path: string,
+  options: RequestInit = {},
+): Promise<T> {
+  const url = `${API_URL}${V1}${path}`;
+
+  const res = await fetch(url, {
+    headers: {
+      "Content-Type": "application/json",
+      ...(options.headers as Record<string, string> | undefined),
+    },
+    ...options,
+  });
+
+  if (!res.ok) {
+    let detail: string;
+    try {
+      const body = await res.json();
+      detail = body.detail ?? body.message ?? JSON.stringify(body);
+    } catch {
+      detail = res.statusText;
+    }
+    throw new Error(`API ${res.status}: ${detail}`);
+  }
+
+  return res.json() as Promise<T>;
+}
+
+/** Request without the /api/v1 prefix (for root-level endpoints). */
+async function requestRoot<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
@@ -53,25 +84,29 @@ async function request<T>(
 // ---------------------------------------------------------------------------
 
 export function fetchHealth(): Promise<{ status: string; test_mode: boolean }> {
-  return request("/health");
+  return requestRoot("/health");
 }
 
 // ---------------------------------------------------------------------------
 // Providers & VM sizes
 // ---------------------------------------------------------------------------
 
-export function fetchProviders(): Promise<ProviderInfo[]> {
-  return request("/providers");
+export async function fetchProviders(): Promise<ProviderInfo[]> {
+  const data = await request<{ providers: ProviderInfo[] }>("/providers");
+  return data.providers;
 }
 
-export function fetchVMSizes(
+export async function fetchVMSizes(
   provider: string,
   region?: string,
 ): Promise<VMSize[]> {
   const params = new URLSearchParams();
   if (region) params.set("region", region);
   const qs = params.toString();
-  return request(`/providers/${provider}/vm-sizes${qs ? `?${qs}` : ""}`);
+  const data = await request<{ vm_sizes: VMSize[] }>(
+    `/providers/${provider}/vm-sizes${qs ? `?${qs}` : ""}`,
+  );
+  return data.vm_sizes;
 }
 
 // ---------------------------------------------------------------------------
@@ -82,9 +117,9 @@ export function validateCredentials(
   provider: string,
   credentials: AzureCredentials,
 ): Promise<{ valid: boolean; message: string }> {
-  return request(`/credentials/${provider}/validate`, {
+  return request(`/providers/${provider}/validate-credentials`, {
     method: "POST",
-    body: JSON.stringify(credentials),
+    body: JSON.stringify({ credentials }),
   });
 }
 
@@ -102,8 +137,9 @@ export function createDeployment(
   });
 }
 
-export function fetchDeployments(): Promise<Deployment[]> {
-  return request("/deployments");
+export async function fetchDeployments(): Promise<Deployment[]> {
+  const data = await request<{ deployments: Deployment[] }>("/deployments");
+  return data.deployments;
 }
 
 export function fetchDeployment(id: string): Promise<Deployment> {
@@ -134,7 +170,7 @@ export function stopDeployment(
 export function destroyDeployment(
   id: string,
 ): Promise<{ success: boolean; status: string; message: string }> {
-  return request(`/deployments/${id}/destroy`, { method: "POST" });
+  return request(`/deployments/${id}`, { method: "DELETE" });
 }
 
 // ---------------------------------------------------------------------------
@@ -155,8 +191,11 @@ export function setAutoShutdown(
 // Services
 // ---------------------------------------------------------------------------
 
-export function fetchServices(id: string): Promise<ServiceEndpoints> {
-  return request(`/deployments/${id}/services`);
+export async function fetchServices(id: string): Promise<ServiceEndpoints> {
+  const data = await request<{ endpoints: ServiceEndpoints }>(
+    `/deployments/${id}/services`,
+  );
+  return data.endpoints;
 }
 
 // ---------------------------------------------------------------------------
@@ -164,6 +203,6 @@ export function fetchServices(id: string): Promise<ServiceEndpoints> {
 // ---------------------------------------------------------------------------
 
 export function connectDeploymentWS(id: string): WebSocket {
-  const url = `${WS_URL}/deployments/${id}/ws`;
+  const url = `${WS_URL}${V1}/deployments/${id}/ws`;
   return new WebSocket(url);
 }
