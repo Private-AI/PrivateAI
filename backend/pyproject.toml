@@ -1,0 +1,28 @@
+[project]
+name = "privateai-backend"
+version = "0.2.0"
+description = "Multi-cloud GPU VM provisioning API for private AI deployments"
+requires-python = ">=3.12"
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP", "B", "SIM"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+    "phase1: Static analysis (zero cost)",
+    "phase2: Dry-run validation (zero cost)",
+    "phase3: Cheap VM integration test (~$0.10/hr)",
+    "phase4: Remote VM validation",
+    "phase5: Full H100 production test (~$35/hr)",
+]

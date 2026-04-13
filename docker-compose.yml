@@ -1,0 +1,155 @@
+services:
+  backend:
+    build: .
+    container_name: privateai-backend
+    volumes:
+      - ./backend:/app/backend
+      - /app/backend/__pycache__
+    working_dir: /app/backend
+    ports:
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/backend
+      - PYTHONUNBUFFERED=1
+    command: >
+      sh -c "pip install -r requirements.txt &&
+             uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
+    networks:
+      - privateai-network
+    restart: unless-stopped
+
+  frontend:
+    build: .
+    container_name: privateai-frontend
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+    working_dir: /app/frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+      - CHOKIDAR_USEPOLLING=true
+    command: >
+      sh -c "npm install &&
+             npm run dev"
+    networks:
+      - privateai-network
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+  electron:
+    build: .
+    container_name: privateai-electron
+    volumes:
+      - ./frontend:/app/frontend
+      - /app/frontend/node_modules
+    working_dir: /app/frontend
+    environment:
+      - DISPLAY=:99
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - privateai-network
+    command: >
+      sh -c "apt-get update && apt-get install -y --no-install-recommends xvfb && Xvfb :99 -screen 0 1024x768x24 -ac & sleep 2 && npm run electron:docker"
+    # Note: This runs Electron in a virtual framebuffer; no GUI output.
+    # To see the Electron window, run Electron on the host instead.
+
+  combined:
+    build: .
+    container_name: privateai-combined
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - /app/backend/__pycache__
+      - /app/frontend/node_modules
+    working_dir: /app
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/backend
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+    command:
+      - /bin/bash
+      - -c
+      - |
+        cd /app/backend && pip install -r requirements.txt
+        cd /app/frontend && npm install
+        cd /app
+        npx concurrently --names "BACKEND,FRONTEND" \
+          "cd /app/backend && uvicorn main:app --host 0.0.0.0 --port 8000 --reload" \
+          "cd /app/frontend && npm run dev"
+    networks:
+      - privateai-network
+    restart: unless-stopped
+
+  dev:
+    build: .
+    container_name: privateai-dev
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - /app/backend/__pycache__
+      - /app/frontend/node_modules
+    working_dir: /app
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+      - "9229:9229"
+    environment:
+      - PYTHONPATH=/app/backend
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+    stdin_open: true
+    tty: true
+    command: /bin/bash
+    networks:
+      - privateai-network
+
+  # Combined test service — runs frontend + backend in test/mock mode.
+  # The backend returns dummy data instantly (no Azure credentials needed).
+  # Use this for UI development, testing, and demos.
+  #
+  #   docker compose up test
+  #
+  test:
+    build: .
+    container_name: privateai-test
+    volumes:
+      - ./backend:/app/backend
+      - ./frontend:/app/frontend
+      - /app/backend/__pycache__
+      - /app/frontend/node_modules
+    working_dir: /app
+    ports:
+      - "3000:3000"
+      - "8000:8000"
+    environment:
+      - PYTHONPATH=/app/backend
+      - PYTHONUNBUFFERED=1
+      - PRIVATEAI_TEST_MODE=true
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - CHOKIDAR_USEPOLLING=true
+    command:
+      - /bin/bash
+      - -c
+      - |
+        cd /app/backend && pip install -r requirements.txt
+        cd /app/frontend && npm install
+        cd /app
+        npx concurrently --names "BACKEND,FRONTEND" \
+          "cd /app/backend && PRIVATEAI_TEST_MODE=true uvicorn main:app --host 0.0.0.0 --port 8000 --reload" \
+          "cd /app/frontend && npm run dev"
+    networks:
+      - privateai-network
+    restart: unless-stopped
+
+networks:
+  privateai-network:
+    driver: bridge
