@@ -164,7 +164,7 @@ class CloudProvider(abc.ABC):
         ssh_private_key: str,
         progress_callback: Any | None = None,
     ) -> SetupResult:
-        """Install GPU drivers, Ollama, models, and optionally Open WebUI.
+        """Install GPU drivers, Ollama, and pull models.
 
         ``ssh_private_key`` is the path to the private key file on the
         backend host.
@@ -247,7 +247,4 @@ class CloudProvider(abc.ABC):
         """
         ssh = f"ssh azureuser@{public_ip}" if public_ip else ""
         ollama = f"http://{public_ip}:11434" if public_ip else ""
-        open_webui = ""
-        if config.setup.deploy_open_webui and public_ip:
-            open_webui = f"http://{public_ip}:{config.setup.open_webui_port}"
-        return ServiceEndpoints(ssh=ssh, ollama_api=ollama, open_webui=open_webui)
+        return ServiceEndpoints(ssh=ssh, ollama_api=ollama)

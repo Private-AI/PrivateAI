@@ -12,6 +12,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from app.models.credentials import Credentials
+from app.models.cost import BudgetConfig, CostAlert, CostReport
+from app.models.open_webui import OpenWebuiEnvConfig, OpenWebuiState
 from app.models.deployment import (
     CloudProvider,
     DeploymentConfig,
@@ -163,6 +165,94 @@ class AutoShutdownRequest(BaseModel):
 class AutoShutdownResponse(BaseModel):
     success: bool
     message: str
+
+
+# ── Cost monitoring ──────────────────────────────────────────────────
+
+
+class SetBudgetRequest(BaseModel):
+    """POST /api/v1/cost/budget — set global budget limits."""
+
+    budget: BudgetConfig
+
+
+class SetBudgetResponse(BaseModel):
+    success: bool
+    message: str
+    budget: BudgetConfig
+
+
+class SetDeploymentBudgetRequest(BaseModel):
+    """POST /api/v1/cost/deployments/{id}/budget — set per-deployment limit."""
+
+    max_spend_usd: float = Field(
+        ...,
+        ge=0,
+        description="Max spend for this deployment. 0 = use global.",
+    )
+
+
+class SetDeploymentBudgetResponse(BaseModel):
+    success: bool
+    message: str
+    deployment_id: str
+    max_spend_usd: float
+
+
+class CostReportResponse(BaseModel):
+    """GET /api/v1/cost/report — full cost report."""
+
+    report: CostReport
+
+
+class CostAlertsResponse(BaseModel):
+    """GET /api/v1/cost/alerts — recent cost alerts."""
+
+    alerts: list[CostAlert]
+
+
+class AcknowledgeAlertResponse(BaseModel):
+    success: bool
+    message: str
+
+
+# ── Open WebUI management ────────────────────────────────────────────
+
+
+class OpenWebuiStatusResponse(BaseModel):
+    """GET /api/v1/open-webui/status — current state."""
+
+    state: OpenWebuiState
+
+
+class OpenWebuiStartRequest(BaseModel):
+    """POST /api/v1/open-webui/start — start with optional config override."""
+
+    config: OpenWebuiEnvConfig | None = None
+
+
+class OpenWebuiStartResponse(BaseModel):
+    success: bool
+    message: str
+    state: OpenWebuiState
+
+
+class OpenWebuiStopResponse(BaseModel):
+    success: bool
+    message: str
+
+
+class OpenWebuiConfigUpdateRequest(BaseModel):
+    """PUT /api/v1/open-webui/config — update env vars (triggers restart)."""
+
+    config: OpenWebuiEnvConfig
+
+
+class OpenWebuiConfigUpdateResponse(BaseModel):
+    success: bool
+    message: str
+    config: OpenWebuiEnvConfig
+    restarted: bool
 
 
 # ── Errors ───────────────────────────────────────────────────────────

@@ -1,5 +1,6 @@
 import type {
   AzureCredentials,
+  BudgetConfig,
   DeploymentStatus,
   ServiceEndpoints,
 } from "./types";
@@ -51,6 +52,7 @@ export interface AppSettings {
   lastProvider: string;
   defaultRegion: string;
   defaultModels: string[];
+  budgetConfig: BudgetConfig | null;
 }
 
 const DEFAULT_SETTINGS: AppSettings = {
@@ -59,6 +61,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   lastProvider: "azure",
   defaultRegion: "eastus",
   defaultModels: [],
+  budgetConfig: null,
 };
 
 export function getSettings(): AppSettings {

@@ -57,7 +57,6 @@ class SetupPhase(StrEnum):
     NVIDIA_DRIVER = "nvidia_driver"
     INSTALL_OLLAMA = "install_ollama"
     PULL_MODELS = "pull_models"
-    INSTALL_OPEN_WEBUI = "install_open_webui"
     DONE = "done"
 
 
@@ -71,14 +70,6 @@ class SetupConfig(BaseModel):
         default=["gemma3:4b"],
         description="Ollama model tags to pull after setup",
     )
-    deploy_open_webui: bool = Field(
-        default=False,
-        description="Whether to deploy Open WebUI alongside Ollama",
-    )
-    open_webui_port: int = Field(
-        default=3000,
-        description="Port for Open WebUI (only used if deploy_open_webui=True)",
-    )
 
 
 class DeploymentConfig(BaseModel):
@@ -90,9 +81,7 @@ class DeploymentConfig(BaseModel):
     """
 
     provider: CloudProvider = Field(..., description="Which cloud provider to use")
-    region: str = Field(
-        ..., description="Cloud region / location (e.g. 'eastus', 'us-central1')"
-    )
+    region: str = Field(..., description="Cloud region / location (e.g. 'eastus', 'us-central1')")
     vm_name: str = Field(
         default="privateai-vm",
         description="Name for the VM resource",
@@ -104,9 +93,7 @@ class DeploymentConfig(BaseModel):
     )
 
     # Hardware
-    vm_size: str = Field(
-        ..., description="VM SKU / instance type (provider-specific string)"
-    )
+    vm_size: str = Field(..., description="VM SKU / instance type (provider-specific string)")
     gpu_enabled: bool = Field(default=True, description="Whether the VM has a GPU")
 
     # Security
@@ -161,7 +148,6 @@ class ServiceEndpoints(BaseModel):
 
     ssh: str = Field(default="", description="SSH connection string")
     ollama_api: str = Field(default="", description="Ollama API base URL")
-    open_webui: str = Field(default="", description="Open WebUI URL (if deployed)")
 
 
 # ── Deployment record (system state) ────────────────────────────────

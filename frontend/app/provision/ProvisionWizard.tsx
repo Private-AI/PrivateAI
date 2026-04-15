@@ -350,7 +350,6 @@ interface ConfigFormState {
   vmSize: string;
   securityLevel: SecurityLevel;
   model: string;
-  deployOpenWebUI: boolean;
 }
 
 function ConfigStep({
@@ -529,22 +528,6 @@ function ConfigStep({
           ))}
         </div>
       </div>
-
-      {/* Open WebUI */}
-      <label className="card flex items-center gap-3 p-4 cursor-pointer select-none">
-        <input
-          type="checkbox"
-          checked={form.deployOpenWebUI}
-          onChange={(e) => onChange({ deployOpenWebUI: e.target.checked })}
-          className="w-4 h-4 accent-[var(--accent)] rounded shrink-0"
-        />
-        <div>
-          <p className="text-sm font-medium text-[var(--fg)]">Deploy Open WebUI</p>
-          <p className="text-xs text-[var(--muted)]">
-            Include a browser-based chat interface for interacting with your model.
-          </p>
-        </div>
-      </label>
 
       {/* Nav */}
       <div className="flex items-center justify-between pt-2">
@@ -742,28 +725,7 @@ function DeployStep({
               </a>
             </div>
           )}
-          {endpoints.open_webui && (
-            <div className="flex items-center gap-2 text-xs">
-              <IconChat size={14} className="shrink-0 text-[var(--muted)]" />
-              <a
-                href={endpoints.open_webui}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 truncate font-mono text-[var(--accent)] hover:underline"
-              >
-                {endpoints.open_webui}
-              </a>
-              <a
-                href={endpoints.open_webui}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-                aria-label="Open WebUI"
-              >
-                <IconExternalLink size={14} />
-              </a>
-            </div>
-          )}
+
         </div>
       )}
 
@@ -816,7 +778,6 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     vmSize: "",
     securityLevel: "confidential",
     model: "",
-    deployOpenWebUI: true,
   });
   const [vmSizes, setVmSizes] = useState<VMSize[]>([]);
   const [vmSizesLoading, setVmSizesLoading] = useState(false);
@@ -1004,8 +965,6 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       allowed_api_sources: ["*"],
       setup: {
         models: [configForm.model],
-        deploy_open_webui: configForm.deployOpenWebUI,
-        open_webui_port: 3000,
       },
       provider_options: {},
     };
@@ -1024,7 +983,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
         status: "provisioning",
         created_at: new Date().toISOString(),
         public_ip: "",
-        endpoints: { ssh: null, ollama_api: null, open_webui: null },
+        endpoints: { ssh: null, ollama_api: null },
       });
 
       // Connect WebSocket for live progress
@@ -1065,7 +1024,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
               status: "running",
               created_at: new Date().toISOString(),
               public_ip: data.public_ip ?? "",
-              endpoints: data.endpoints ?? { ssh: null, ollama_api: null, open_webui: null },
+              endpoints: data.endpoints ?? { ssh: null, ollama_api: null },
             });
             ws.close();
           }
@@ -1082,7 +1041,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
               status: "failed",
               created_at: new Date().toISOString(),
               public_ip: "",
-              endpoints: { ssh: null, ollama_api: null, open_webui: null },
+              endpoints: { ssh: null, ollama_api: null },
             });
             ws.close();
           }

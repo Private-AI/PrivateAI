@@ -1,8 +1,7 @@
 """Remote VM software setup via SSH — Azure implementation.
 
 Refactored from the original ``azure_setup.vm_setup`` module.
-Installs NVIDIA drivers, Ollama, pulls models, and optionally deploys
-Open WebUI via Docker.
+Installs NVIDIA drivers, Ollama, and pulls models.
 """
 
 from __future__ import annotations
@@ -31,7 +30,6 @@ SETUP_STEPS = [
     ("nvidia_driver", "Installing NVIDIA driver"),
     ("install_ollama", "Installing and configuring Ollama"),
     ("pull_models", "Pulling AI models"),
-    ("install_open_webui", "Installing Open WebUI"),
 ]
 
 
@@ -60,11 +58,9 @@ def setup_vm_remote(
     username: str = "azureuser",
     ssh_key_path: str = "~/.ssh/id_ed25519",
     models: list[str] | None = None,
-    deploy_open_webui: bool = False,
-    open_webui_port: int = 3000,
     progress_callback: Any | None = None,
 ) -> SetupResult:
-    """Install NVIDIA drivers, Ollama, models, and optionally Open WebUI.
+    """Install NVIDIA drivers, Ollama, and pull models.
 
     This is a synchronous function — the provider wraps it in
     ``asyncio.to_thread()``.
@@ -74,8 +70,6 @@ def setup_vm_remote(
         username: SSH username.
         ssh_key_path: Path to the SSH *private* key.
         models: Ollama model tags to pull.
-        deploy_open_webui: Whether to install Open WebUI.
-        open_webui_port: Port for Open WebUI container.
         progress_callback: Optional ``(step, current, total, msg)`` callback.
 
     Returns:
@@ -244,18 +238,14 @@ fi
 
         if exit_code == 100 or "REBOOT_REQUIRED" in stdout:
             result.reboot_required = True
-            result.error = (
-                "VM needs a reboot for NVIDIA drivers. Reboot and re-run setup."
-            )
+            result.error = "VM needs a reboot for NVIDIA drivers. Reboot and re-run setup."
             _progress(3, "failed", "reboot required")
             return result
         elif exit_code != 0:
             _progress(3, "completed", "skipped (no GPU detected)")
         else:
             gpu_lines = [
-                line
-                for line in stdout.strip().split("\n")
-                if line and "DRIVER" not in line
+                line for line in stdout.strip().split("\n") if line and "DRIVER" not in line
             ]
             result.gpu_info = "; ".join(gpu_lines)
             _progress(3, "completed", result.gpu_info)
@@ -318,52 +308,6 @@ exit 1
             "completed",
             f"{len(result.models_installed)}/{len(models)} pulled",
         )
-
-        # ── 7. Open WebUI (optional) ─────────────────────────
-        if deploy_open_webui:
-            _progress(6, "in_progress")
-            open_webui_script = f"""
-set -euo pipefail
-
-# Install Docker if not present
-if ! command -v docker &>/dev/null; then
-    curl -fsSL https://get.docker.com | sh
-    sudo usermod -aG docker {username}
-fi
-
-# Stop existing Open WebUI container if running
-sudo docker stop open-webui 2>/dev/null || true
-sudo docker rm open-webui 2>/dev/null || true
-
-# Run Open WebUI container
-sudo docker run -d \
-    --name open-webui \
-    --restart unless-stopped \
-    -p {open_webui_port}:8080 \
-    -e OLLAMA_BASE_URL=http://host.docker.internal:11434 \
-    --add-host=host.docker.internal:host-gateway \
-    -v open-webui-data:/app/backend/data \
-    ghcr.io/open-webui/open-webui:main
-
-# Wait for it to be healthy
-for i in $(seq 1 60); do
-    if curl -sf http://localhost:{open_webui_port} &>/dev/null; then
-        echo "OPEN_WEBUI_READY"
-        exit 0
-    fi
-    sleep 2
-done
-echo "OPEN_WEBUI_TIMEOUT"
-exit 1
-"""
-            exit_code, stdout, stderr = _run_ssh(client, open_webui_script, timeout=600)
-            if exit_code != 0:
-                logger.warning("Open WebUI install failed: %s", stderr[:500])
-                _progress(6, "failed", f"Open WebUI failed: {stderr[:200]}")
-            else:
-                _progress(6, "completed")
-        else:
-            _progress(6, "completed", "skipped (not requested)")
 
         # ── Done ─────────────────────────────────────────────
         result.success = True

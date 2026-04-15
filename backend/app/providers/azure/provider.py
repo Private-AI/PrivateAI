@@ -113,9 +113,7 @@ def _read_ssh_public_key(path: str) -> str:
     """Read SSH public key from file, generating one if it doesn't exist."""
     expanded = Path(path).expanduser()
     if not expanded.exists():
-        private_path = (
-            expanded.with_suffix("") if expanded.suffix == ".pub" else expanded
-        )
+        private_path = expanded.with_suffix("") if expanded.suffix == ".pub" else expanded
         pub_path = Path(f"{private_path}.pub")
 
         if private_path.exists():
@@ -182,6 +180,7 @@ class AzureProvider(CloudProviderBase):
                 "memory_gb": p.memory_gb,
                 "confidential": p.confidential,
                 "description": p.description,
+                "cost_per_hour": p.cost_per_hour,
             }
             for p in AZURE_VM_PROFILES
         ]
@@ -213,9 +212,7 @@ class AzureProvider(CloudProviderBase):
         Runs the blocking Azure SDK calls in a thread pool so the event
         loop stays responsive.
         """
-        return await asyncio.to_thread(
-            self._provision_sync, config, credentials, progress_callback
-        )
+        return await asyncio.to_thread(self._provision_sync, config, credentials, progress_callback)
 
     def _provision_sync(
         self,
@@ -232,9 +229,7 @@ class AzureProvider(CloudProviderBase):
         compute_client = ComputeManagementClient(credential, subscription_id)
 
         total = len(PROVISION_STEPS)
-        steps: list[StepProgress] = [
-            _make_step(s_id, s_label) for s_id, s_label in PROVISION_STEPS
-        ]
+        steps: list[StepProgress] = [_make_step(s_id, s_label) for s_id, s_label in PROVISION_STEPS]
         result = ProvisionResult(success=False, steps=steps)
 
         def _progress(idx: int, status: str, detail: str = "") -> None:
@@ -289,22 +284,6 @@ class AzureProvider(CloudProviderBase):
                     destination_port_range="11434",
                 ),
             ]
-
-            # Add Open WebUI port if requested
-            if config.setup.deploy_open_webui:
-                nsg_rules.append(
-                    SecurityRule(
-                        name="AllowOpenWebUI",
-                        priority=1020,
-                        protocol=SecurityRuleProtocol.TCP,
-                        access=SecurityRuleAccess.ALLOW,
-                        direction=SecurityRuleDirection.INBOUND,
-                        source_address_prefix=az["nsg_ollama_source"],
-                        source_port_range="*",
-                        destination_address_prefix="*",
-                        destination_port_range=str(config.setup.open_webui_port),
-                    ),
-                )
 
             nsg_params = NetworkSecurityGroup(
                 location=az["location"],
@@ -458,9 +437,7 @@ class AzureProvider(CloudProviderBase):
 
             # ── 7. Data Disk ─────────────────────────────────
             _progress(6, "in_progress", f"{az['data_disk_size_gb']} GB")
-            current_vm = compute_client.virtual_machines.get(
-                az["resource_group"], az["vm_name"]
-            )
+            current_vm = compute_client.virtual_machines.get(az["resource_group"], az["vm_name"])
             existing_disks = (
                 current_vm.storage_profile.data_disks
                 if current_vm.storage_profile and current_vm.storage_profile.data_disks
@@ -488,9 +465,7 @@ class AzureProvider(CloudProviderBase):
             _progress(6, "completed")
 
             # ── Get public IP ────────────────────────────────
-            pip_info = network_client.public_ip_addresses.get(
-                az["resource_group"], az["pip_name"]
-            )
+            pip_info = network_client.public_ip_addresses.get(az["resource_group"], az["pip_name"])
             result.public_ip = pip_info.ip_address or ""
             result.success = True
             result.provider_metadata = {
@@ -557,7 +532,7 @@ class AzureProvider(CloudProviderBase):
         ssh_private_key: str,
         progress_callback: Any | None = None,
     ) -> SetupResult:
-        """Install GPU drivers, Ollama, models, and optionally Open WebUI."""
+        """Install GPU drivers, Ollama, and pull models."""
         az = build_azure_params(config)
         return await asyncio.to_thread(
             setup_vm_remote,
@@ -565,8 +540,6 @@ class AzureProvider(CloudProviderBase):
             username=az["vm_user"],
             ssh_key_path=ssh_private_key,
             models=config.setup.models,
-            deploy_open_webui=config.setup.deploy_open_webui,
-            open_webui_port=config.setup.open_webui_port,
             progress_callback=progress_callback,
         )
 
@@ -590,9 +563,7 @@ class AzureProvider(CloudProviderBase):
                 vm = compute_client.virtual_machines.get(
                     config.resource_group, config.vm_name, expand="instanceView"
                 )
-                result.vm_size = (
-                    vm.hardware_profile.vm_size if vm.hardware_profile else "unknown"
-                )
+                result.vm_size = vm.hardware_profile.vm_size if vm.hardware_profile else "unknown"
                 result.provisioning_state = vm.provisioning_state or "unknown"
                 if vm.instance_view and vm.instance_view.statuses:
                     for status in vm.instance_view.statuses:
@@ -603,18 +574,14 @@ class AzureProvider(CloudProviderBase):
 
             try:
                 pip_name = f"{config.vm_name}-pip"
-                pip = network_client.public_ip_addresses.get(
-                    config.resource_group, pip_name
-                )
+                pip = network_client.public_ip_addresses.get(config.resource_group, pip_name)
                 result.public_ip = pip.ip_address or ""
             except Exception:
                 pass
 
             try:
                 resources = list(
-                    resource_client.resources.list_by_resource_group(
-                        config.resource_group
-                    )
+                    resource_client.resources.list_by_resource_group(config.resource_group)
                 )
                 result.resource_count = len(resources)
             except Exception:
@@ -641,9 +608,7 @@ class AzureProvider(CloudProviderBase):
             poller.result()
 
             pip_name = f"{config.vm_name}-pip"
-            pip = network_client.public_ip_addresses.get(
-                config.resource_group, pip_name
-            )
+            pip = network_client.public_ip_addresses.get(config.resource_group, pip_name)
             return pip.ip_address or ""
 
         return await asyncio.to_thread(_start)
@@ -756,7 +721,4 @@ class AzureProvider(CloudProviderBase):
         az = build_azure_params(config)
         ssh = f"ssh {az['vm_user']}@{public_ip}" if public_ip else ""
         ollama = f"http://{public_ip}:11434" if public_ip else ""
-        open_webui = ""
-        if config.setup.deploy_open_webui and public_ip:
-            open_webui = f"http://{public_ip}:{config.setup.open_webui_port}"
-        return ServiceEndpoints(ssh=ssh, ollama_api=ollama, open_webui=open_webui)
+        return ServiceEndpoints(ssh=ssh, ollama_api=ollama)

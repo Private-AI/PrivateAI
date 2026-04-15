@@ -75,9 +75,7 @@ def validate_vm_remote(
                 look_for_keys=False,
                 allow_agent=False,
             )
-            result.checks.append(
-                ValidationCheck("SSH connectivity", True, f"Connected to {ip}")
-            )
+            result.checks.append(ValidationCheck("SSH connectivity", True, f"Connected to {ip}"))
         except Exception as e:
             result.checks.append(ValidationCheck("SSH connectivity", False, str(e)))
             return result  # Cannot continue without SSH
@@ -111,9 +109,7 @@ def validate_vm_remote(
                 )
             )
         else:
-            _, dir_exists, _ = _run_ssh(
-                client, "test -d /models && echo yes || echo no"
-            )
+            _, dir_exists, _ = _run_ssh(client, "test -d /models && echo yes || echo no")
             result.checks.append(
                 ValidationCheck(
                     "Data disk mount",
@@ -136,8 +132,7 @@ def validate_vm_remote(
         if check_gpu:
             exit_code, gpu_output, _ = _run_ssh(
                 client,
-                "nvidia-smi --query-gpu=name,driver_version,memory.total "
-                "--format=csv,noheader",
+                "nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader",
             )
             result.checks.append(
                 ValidationCheck(
@@ -164,9 +159,7 @@ def validate_vm_remote(
 
         # ── Check 7: Ollama service ──────────────────────────
         _, svc_status, _ = _run_ssh(client, "systemctl is-active ollama 2>/dev/null")
-        result.checks.append(
-            ValidationCheck("Ollama service", svc_status == "active", svc_status)
-        )
+        result.checks.append(ValidationCheck("Ollama service", svc_status == "active", svc_status))
 
         if svc_status == "active":
             _, env_output, _ = _run_ssh(
@@ -191,9 +184,7 @@ def validate_vm_remote(
             )
 
         # ── Check 8: Ollama API (local) ──────────────────────
-        exit_code, api_output, _ = _run_ssh(
-            client, "curl -sf http://localhost:11434/api/tags"
-        )
+        exit_code, api_output, _ = _run_ssh(client, "curl -sf http://localhost:11434/api/tags")
         if exit_code == 0 and api_output:
             result.checks.append(
                 ValidationCheck("Ollama API (local)", True, "responding on :11434")
@@ -214,9 +205,7 @@ def validate_vm_remote(
             except (json.JSONDecodeError, KeyError):
                 pass
         else:
-            result.checks.append(
-                ValidationCheck("Ollama API (local)", False, "not responding")
-            )
+            result.checks.append(ValidationCheck("Ollama API (local)", False, "not responding"))
 
         # ── Check 9: Remote API access ───────────────────────
         try:
@@ -244,20 +233,6 @@ def validate_vm_remote(
                         "skipped (service not running)",
                     )
                 )
-
-        # ── Check 10: Open WebUI (if docker container exists) ─
-        exit_code, webui_status, _ = _run_ssh(
-            client,
-            "sudo docker inspect --format='{{.State.Status}}' open-webui 2>/dev/null",
-        )
-        if exit_code == 0:
-            result.checks.append(
-                ValidationCheck(
-                    "Open WebUI container",
-                    webui_status.strip() == "running",
-                    f"container status: {webui_status.strip()}",
-                )
-            )
 
         return result
 

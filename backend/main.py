@@ -9,7 +9,7 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import deployments, providers, services, terminal
+from app.routers import cost, deployments, open_webui, providers, services, terminal
 
 # ── Logging ───────────────────────────────────────────────────────────
 
@@ -45,10 +45,36 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────
 
+app.include_router(cost.router)
 app.include_router(deployments.router)
+app.include_router(open_webui.router)
 app.include_router(providers.router)
 app.include_router(services.router)
 app.include_router(terminal.router)
+
+
+# ── Lifecycle events ──────────────────────────────────────────────────
+
+
+@app.on_event("startup")
+async def _startup() -> None:
+    from app.services.cost_monitor import get_cost_monitor
+    from app.services.open_webui_manager import get_open_webui_manager
+
+    get_cost_monitor().start()
+    get_open_webui_manager().start_health_loop()
+
+
+@app.on_event("shutdown")
+async def _shutdown() -> None:
+    from app.services.cost_monitor import get_cost_monitor
+    from app.services.open_webui_manager import get_open_webui_manager
+
+    get_cost_monitor().stop()
+
+    manager = get_open_webui_manager()
+    manager.stop_health_loop()
+    await manager.stop()
 
 
 # ── Root endpoints ────────────────────────────────────────────────────

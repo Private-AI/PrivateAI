@@ -16,12 +16,19 @@ import {
   IconTerminal,
   IconTrash,
 } from "@/app/components/icons";
+import {
+  CostDetailPanel,
+  CostSummaryBar,
+  useCostMonitor,
+} from "@/app/components/cost/CostMonitor";
 import TerminalPanel from "@/app/components/TerminalPanel";
 import WebUIPanel from "@/app/components/WebUIPanel";
 import {
+  connectOpenWebuiToDeployment,
   destroyDeployment,
   fetchDeploymentLive,
   fetchDeployments,
+  fetchOpenWebuiStatus,
   startDeployment,
   stopDeployment,
 } from "@/app/lib/api";
@@ -130,7 +137,6 @@ function relativeTime(iso: string): string {
 const EMPTY_ENDPOINTS: ServiceEndpoints = {
   ssh: null,
   ollama_api: null,
-  open_webui: null,
 };
 
 // ---------------------------------------------------------------------------
@@ -214,7 +220,9 @@ interface CardProps {
   onStop: (id: string) => Promise<void>;
   onDestroy: (id: string) => Promise<void>;
   onOpenTerminal: (id: string) => void;
-  onOpenWebUI: (id: string, url: string) => void;
+  onOpenChat: (id: string, name: string, ollamaUrl: string) => void;
+  chatLoadingId: string | null;
+  connectedDeploymentId: string;
   loadingAction: string | null;
 }
 
@@ -226,12 +234,15 @@ function DeploymentCard({
   onStop,
   onDestroy,
   onOpenTerminal,
-  onOpenWebUI,
+  onOpenChat,
+  chatLoadingId,
+  connectedDeploymentId,
   loadingAction,
 }: CardProps) {
   const sshCommand = d.public_ip ? `ssh root@${d.public_ip}` : null;
   const ollamaUrl = d.endpoints?.ollama_api ?? null;
-  const webuiUrl = d.endpoints?.open_webui ?? null;
+  const isConnected = connectedDeploymentId === d.id;
+  const isChatLoading = chatLoadingId === d.id;
   const pulsing = d.status === "provisioning" || d.status === "configuring";
 
   return (
@@ -268,7 +279,7 @@ function DeploymentCard({
       )}
 
       {/* Service links */}
-      {d.status === "running" && (sshCommand || ollamaUrl || webuiUrl) && (
+      {d.status === "running" && (sshCommand || ollamaUrl) && (
         <div className="flex flex-col gap-2 rounded-md bg-[var(--bg)] p-3">
           {sshCommand && (
             <div className="flex items-center gap-2 text-xs">
@@ -313,35 +324,30 @@ function DeploymentCard({
               </a>
             </div>
           )}
-          {webuiUrl && (
-            <div className="flex items-center gap-2 text-xs">
-              <IconChat size={14} className="shrink-0 text-[var(--muted)]" />
-              <a
-                href={webuiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 truncate font-mono text-[var(--accent)] hover:underline"
-              >
-                {webuiUrl}
-              </a>
+
+          {/* Open Chat — connect Open WebUI to this deployment */}
+          {ollamaUrl && (
+            <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
-                className="btn btn-ghost btn-sm text-xs"
-                onClick={() => onOpenWebUI(d.id, webuiUrl)}
-                aria-label="Open WebUI embedded"
-                title="Open embedded chat"
+                className={`btn btn-sm flex-1 ${
+                  isConnected
+                    ? "btn-primary"
+                    : "btn-secondary"
+                }`}
+                disabled={isChatLoading}
+                onClick={() => onOpenChat(d.id, d.name, ollamaUrl!)}
               >
-                Open
+                {isChatLoading ? (
+                  <IconLoader size={14} />
+                ) : (
+                  <IconChat size={14} />
+                )}
+                {isConnected ? "Open Chat" : "Connect & Chat"}
               </button>
-              <a
-                href={webuiUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-icon btn-sm"
-                aria-label="Open WebUI in browser"
-              >
-                <IconExternalLink size={14} />
-              </a>
+              {isConnected && (
+                <span className="text-[10px] text-[var(--success)] font-medium">Connected</span>
+              )}
             </div>
           )}
         </div>
@@ -488,7 +494,7 @@ interface DashboardProps {
 
 type OpenPanel =
   | { type: "terminal"; deploymentId: string }
-  | { type: "webui"; deploymentId: string; url: string }
+  | { type: "webui"; url: string }
   | null;
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
@@ -498,14 +504,45 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     Record<string, string | null>
   >({});
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
+  const [costExpanded, setCostExpanded] = useState(false);
+  const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
+  const [connectedDeploymentId, setConnectedDeploymentId] = useState("");
+
+  // Cost monitoring
+  const {
+    report: costReport,
+    loading: costLoading,
+    refreshing: costRefreshing,
+    refresh: refreshCost,
+    hasUnacknowledgedAlerts,
+  } = useCostMonitor();
 
   const handleOpenTerminal = useCallback((id: string) => {
     setOpenPanel({ type: "terminal", deploymentId: id });
   }, []);
 
-  const handleOpenWebUI = useCallback((id: string, url: string) => {
-    setOpenPanel({ type: "webui", deploymentId: id, url });
-  }, []);
+  /** Called from a deployment card — connects Open WebUI to this deployment, then opens chat. */
+  const handleConnectAndChat = useCallback(
+    async (deploymentId: string, deploymentName: string, ollamaUrl: string) => {
+      setChatLoadingId(deploymentId);
+      try {
+        const result = await connectOpenWebuiToDeployment(
+          deploymentId,
+          deploymentName,
+          ollamaUrl,
+        );
+        setConnectedDeploymentId(deploymentId);
+        if (result.success && result.state.url) {
+          setOpenPanel({ type: "webui", url: result.state.url });
+        }
+      } catch {
+        // error
+      } finally {
+        setChatLoadingId(null);
+      }
+    },
+    [],
+  );
 
   const handleClosePanel = useCallback(() => {
     setOpenPanel(null);
@@ -566,6 +603,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
   useEffect(() => {
     loadData();
+    // Sync connected deployment from Open WebUI status
+    fetchOpenWebuiStatus()
+      .then((state) => {
+        if (state.connected_deployment_id) {
+          setConnectedDeploymentId(state.connected_deployment_id);
+        }
+      })
+      .catch(() => {});
   }, [loadData]);
 
   // -----------------------------------------------------------------------
@@ -693,6 +738,24 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         </button>
       </div>
 
+      {/* Cost monitoring bar */}
+      <CostSummaryBar
+        report={costReport}
+        loading={costLoading}
+        onExpand={() => setCostExpanded((prev) => !prev)}
+        hasUnacknowledgedAlerts={hasUnacknowledgedAlerts}
+      />
+
+      {/* Cost detail panel (expanded) */}
+      {costExpanded && costReport && (
+        <CostDetailPanel
+          report={costReport}
+          onClose={() => setCostExpanded(false)}
+          onRefresh={refreshCost}
+          refreshing={costRefreshing}
+        />
+      )}
+
       {/* Loading skeleton */}
       {loading && deployments.length === 0 && (
         <div className="flex items-center justify-center py-24">
@@ -716,7 +779,9 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               onStop={handleStop}
               onDestroy={handleDestroy}
               onOpenTerminal={handleOpenTerminal}
-              onOpenWebUI={handleOpenWebUI}
+              onOpenChat={handleConnectAndChat}
+              chatLoadingId={chatLoadingId}
+              connectedDeploymentId={connectedDeploymentId}
               loadingAction={actionLoading[d.id] ?? null}
             />
           ))}

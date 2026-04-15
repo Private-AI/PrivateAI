@@ -10,18 +10,18 @@ frontend/dist-electron
 frontend/.env.local
 frontend/.env*.local
 
+# Python bytecode (recursive — catches all subdirectories)
+__pycache__/
+*.pyc
+*.pyo
+
 # Backend
-backend/__pycache__
-backend/*.pyc
 backend/.env
 backend/.venv
 backend/venv
-backend/app/providers/__pycache__/
-backend/app/routers/__pycache__/
-backend/app/services/__pycache__/
-backend/app/__pycache__/
-backend/app/models/__pycache__/
 
+#Ignore the open-webui directory
+open-webui-data/
 
 # IDE
 .vscode

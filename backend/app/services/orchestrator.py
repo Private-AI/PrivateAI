@@ -22,6 +22,7 @@ from app.models.deployment import (
 )
 from app.providers.base import CloudProvider
 from app.providers.registry import get_provider
+from app.services.cost_monitor import get_cost_monitor
 from app.services.deployment_store import DeploymentStore, get_store
 from app.services.ws_manager import ws_manager
 
@@ -62,9 +63,24 @@ class DeploymentOrchestrator:
         record = self.store.create(config, credentials)
         logger.info("Created deployment %s (provider=%s)", record.id, config.provider)
 
+        # Register with cost monitor
+        cost_per_hour = self._get_cost_per_hour(config.vm_size)
+        cost_monitor = get_cost_monitor()
+        cost_monitor.register_deployment(record.id, config.vm_size, cost_per_hour)
+
         # Launch provisioning as a background task
         asyncio.create_task(self._run_provision(record.id))
         return record
+
+    @staticmethod
+    def _get_cost_per_hour(vm_size: str) -> float:
+        """Look up cost/hr for a VM size from the Azure profile catalog."""
+        try:
+            from app.providers.azure.config import get_cost_per_hour
+
+            return get_cost_per_hour(vm_size)
+        except Exception:
+            return 0.0
 
     async def _run_provision(self, deployment_id: str) -> None:
         """Background task: provision infrastructure then optionally
@@ -155,9 +171,7 @@ class DeploymentOrchestrator:
             },
         )
 
-        ssh_key = record.config.provider_options.get(
-            "ssh_key_path", "~/.ssh/id_ed25519"
-        )
+        ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
 
         def _setup_progress(step: str, current: int, total: int, msg: str) -> None:
             asyncio.get_event_loop().call_soon_threadsafe(
@@ -187,6 +201,8 @@ class DeploymentOrchestrator:
 
         if setup_result.success:
             self.store.update_status(deployment_id, DeploymentStatus.RUNNING)
+            # Start cost billing now that the VM is running
+            get_cost_monitor().start_billing(deployment_id)
             await ws_manager.broadcast(
                 deployment_id,
                 {
@@ -200,6 +216,8 @@ class DeploymentOrchestrator:
                 DeploymentStatus.RUNNING,
                 error="VM needs reboot for GPU drivers. Reboot then re-run setup.",
             )
+            # Still billing — VM is running even if setup needs a reboot
+            get_cost_monitor().start_billing(deployment_id)
             await ws_manager.broadcast(
                 deployment_id,
                 {
@@ -234,9 +252,7 @@ class DeploymentOrchestrator:
         provider = self._get_provider(record.config.provider)
         self.store.update_status(deployment_id, DeploymentStatus.CONFIGURING)
 
-        ssh_key = record.config.provider_options.get(
-            "ssh_key_path", "~/.ssh/id_ed25519"
-        )
+        ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
         setup_result = await provider.setup_vm(
             record.config, credentials, record.public_ip, ssh_key
         )
@@ -269,11 +285,11 @@ class DeploymentOrchestrator:
             endpoints = provider.get_service_endpoints(record.config, ip)
             self.store.update_endpoints(deployment_id, endpoints)
             self.store.update_status(deployment_id, DeploymentStatus.RUNNING)
+            # Resume cost billing
+            get_cost_monitor().start_billing(deployment_id)
             return ip
         except Exception as e:
-            self.store.update_status(
-                deployment_id, DeploymentStatus.FAILED, error=str(e)
-            )
+            self.store.update_status(deployment_id, DeploymentStatus.FAILED, error=str(e))
             return None
 
     async def stop_deployment(self, deployment_id: str) -> bool:
@@ -288,16 +304,14 @@ class DeploymentOrchestrator:
         try:
             await provider.stop_vm(record.config, credentials)
             self.store.update_status(deployment_id, DeploymentStatus.STOPPED)
+            # Pause cost billing
+            get_cost_monitor().stop_billing(deployment_id)
             return True
         except Exception as e:
-            self.store.update_status(
-                deployment_id, DeploymentStatus.FAILED, error=str(e)
-            )
+            self.store.update_status(deployment_id, DeploymentStatus.FAILED, error=str(e))
             return False
 
-    async def set_auto_shutdown(
-        self, deployment_id: str, time_utc: str = "1800"
-    ) -> bool:
+    async def set_auto_shutdown(self, deployment_id: str, time_utc: str = "1800") -> bool:
         """Configure daily auto-shutdown for cost safety."""
         record = self.store.get(deployment_id)
         credentials = self.store.get_credentials(deployment_id)
@@ -325,11 +339,13 @@ class DeploymentOrchestrator:
             success = await provider.destroy(record.config, credentials)
             if success:
                 self.store.update_status(deployment_id, DeploymentStatus.DESTROYED)
+                # Stop billing and remove from cost tracker
+                cost_monitor = get_cost_monitor()
+                cost_monitor.stop_billing(deployment_id)
+                cost_monitor.remove_deployment(deployment_id)
             return success
         except Exception as e:
-            self.store.update_status(
-                deployment_id, DeploymentStatus.FAILED, error=str(e)
-            )
+            self.store.update_status(deployment_id, DeploymentStatus.FAILED, error=str(e))
             return False
 
     # ── Status ───────────────────────────────────────────────
@@ -366,9 +382,7 @@ class DeploymentOrchestrator:
             return {"error": "Deployment not found or no IP"}
 
         provider = self._get_provider(record.config.provider)
-        ssh_key = record.config.provider_options.get(
-            "ssh_key_path", "~/.ssh/id_ed25519"
-        )
+        ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
         result = await provider.validate(
             record.config, credentials, record.public_ip, ssh_key, check_gpu
         )

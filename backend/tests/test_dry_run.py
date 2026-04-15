@@ -54,15 +54,11 @@ class TestAzureConfigTranslation:
         assert params["location"] == "eastus"
 
     def test_custom_location(self) -> None:
-        config = DeploymentConfig(
-            provider="azure", region="westus3", vm_size="Standard_D2s_v5"
-        )
+        config = DeploymentConfig(provider="azure", region="westus3", vm_size="Standard_D2s_v5")
         params = build_azure_params(config)
         assert params["location"] == "westus3"
 
-    def test_resource_group_propagates(
-        self, production_config: DeploymentConfig
-    ) -> None:
+    def test_resource_group_propagates(self, production_config: DeploymentConfig) -> None:
         params = build_azure_params(production_config)
         assert params["resource_group"] == "h100-conf-rg"
 
@@ -86,9 +82,7 @@ class TestAzureConfigTranslation:
         assert params["os_disk_type"] == "Standard_LRS"
         assert params["data_disk_type"] == "Standard_LRS"
 
-    def test_production_uses_premium_disks(
-        self, production_config: DeploymentConfig
-    ) -> None:
+    def test_production_uses_premium_disks(self, production_config: DeploymentConfig) -> None:
         params = build_azure_params(production_config)
         assert params["os_disk_type"] == "Premium_LRS"
         assert params["data_disk_type"] == "Premium_LRS"
@@ -163,12 +157,8 @@ class TestDeploymentConfig:
     def test_setup_config_defaults(self) -> None:
         setup = SetupConfig()
         assert setup.models == ["gemma3:4b"]
-        assert setup.deploy_open_webui is False
-        assert setup.open_webui_port == 3000
 
-    def test_deployment_record_creation(
-        self, production_config: DeploymentConfig
-    ) -> None:
+    def test_deployment_record_creation(self, production_config: DeploymentConfig) -> None:
         record = DeploymentRecord(config=production_config)
         assert record.id  # UUID generated
         assert record.status == DeploymentStatus.PENDING
@@ -178,14 +168,10 @@ class TestDeploymentConfig:
     def test_vm_name_validation(self) -> None:
         """VM names must match [a-zA-Z0-9][a-zA-Z0-9-]{0,62}."""
         # Valid
-        DeploymentConfig(
-            provider="azure", region="eastus", vm_size="x", vm_name="my-vm-1"
-        )
+        DeploymentConfig(provider="azure", region="eastus", vm_size="x", vm_name="my-vm-1")
         # Invalid — starts with hyphen
         with pytest.raises(Exception):
-            DeploymentConfig(
-                provider="azure", region="eastus", vm_size="x", vm_name="-invalid"
-            )
+            DeploymentConfig(provider="azure", region="eastus", vm_size="x", vm_name="-invalid")
 
 
 @pytest.mark.phase2
@@ -213,18 +199,6 @@ class TestAzureProvider:
         endpoints = provider.get_service_endpoints(production_config, "10.0.0.1")
         assert "azureuser@10.0.0.1" in endpoints.ssh
         assert endpoints.ollama_api == "http://10.0.0.1:11434"
-        assert endpoints.open_webui == ""  # not requested
-
-    def test_service_endpoints_with_webui(self) -> None:
-        config = DeploymentConfig(
-            provider="azure",
-            region="eastus",
-            vm_size="Standard_D2s_v5",
-            setup=SetupConfig(deploy_open_webui=True, open_webui_port=8080),
-        )
-        provider = AzureProvider()
-        endpoints = provider.get_service_endpoints(config, "10.0.0.1")
-        assert endpoints.open_webui == "http://10.0.0.1:8080"
 
     def test_service_endpoints_no_ip(self, production_config: DeploymentConfig) -> None:
         provider = AzureProvider()

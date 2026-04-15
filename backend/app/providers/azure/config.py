@@ -29,6 +29,7 @@ class AzureVMProfile:
     memory_gb: int
     confidential: bool
     description: str
+    cost_per_hour: float = 0.0  # Estimated USD/hr for cost tracking
 
 
 # These are the profiles the frontend will offer.
@@ -43,6 +44,7 @@ AZURE_VM_PROFILES: list[AzureVMProfile] = [
         memory_gb=320,
         confidential=True,
         description="H100 GPU with AMD SEV-SNP confidential computing. Best for privacy-sensitive AI workloads.",
+        cost_per_hour=35.00,
     ),
     AzureVMProfile(
         id="a100-standard",
@@ -54,6 +56,7 @@ AZURE_VM_PROFILES: list[AzureVMProfile] = [
         memory_gb=220,
         confidential=False,
         description="A100 GPU for large model inference. Good balance of cost and performance.",
+        cost_per_hour=3.67,
     ),
     AzureVMProfile(
         id="t4-standard",
@@ -65,6 +68,7 @@ AZURE_VM_PROFILES: list[AzureVMProfile] = [
         memory_gb=28,
         confidential=False,
         description="T4 GPU for smaller models. Most cost-effective option.",
+        cost_per_hour=0.53,
     ),
     AzureVMProfile(
         id="test-no-gpu",
@@ -76,8 +80,20 @@ AZURE_VM_PROFILES: list[AzureVMProfile] = [
         memory_gb=8,
         confidential=False,
         description="Cheap VM for testing the provisioning pipeline (~$0.10/hr).",
+        cost_per_hour=0.10,
     ),
 ]
+
+
+# ── Cost-per-hour lookup by VM size ──────────────────────────────────
+
+
+def get_cost_per_hour(vm_size: str) -> float:
+    """Return the estimated cost/hr for a VM size, or 0.0 if unknown."""
+    for profile in AZURE_VM_PROFILES:
+        if profile.vm_size == vm_size:
+            return profile.cost_per_hour
+    return 0.0
 
 
 # ── Azure regions with GPU availability ──────────────────────────────
@@ -151,9 +167,7 @@ def build_azure_params(config: DeploymentConfig) -> dict[str, Any]:
     if config.security_level == SecurityLevel.CONFIDENTIAL:
         image = "ubuntu-confidential-22.04"
         security_type = "ConfidentialVM"
-        disk_encryption = config.provider_options.get(
-            "disk_encryption", "VMGuestStateOnly"
-        )
+        disk_encryption = config.provider_options.get("disk_encryption", "VMGuestStateOnly")
     else:
         image = "ubuntu-22.04"
         security_type = "TrustedLaunch"
@@ -187,12 +201,8 @@ def build_azure_params(config: DeploymentConfig) -> dict[str, Any]:
         "os_disk_type": os_disk_type,
         "data_disk_type": data_disk_type,
         "ssh_key_path": opts.get("ssh_key_path", "~/.ssh/id_ed25519.pub"),
-        "nsg_ssh_source": config.allowed_ssh_sources[0]
-        if config.allowed_ssh_sources
-        else "*",
-        "nsg_ollama_source": config.allowed_api_sources[0]
-        if config.allowed_api_sources
-        else "*",
+        "nsg_ssh_source": config.allowed_ssh_sources[0] if config.allowed_ssh_sources else "*",
+        "nsg_ollama_source": config.allowed_api_sources[0] if config.allowed_api_sources else "*",
         # Derived names
         "nsg_name": f"{config.resource_group}-nsg",
         "vnet_name": f"{config.resource_group}-vnet",

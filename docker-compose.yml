@@ -4,13 +4,18 @@ services:
     container_name: privateai-backend
     volumes:
       - ./backend:/app/backend
+      - ./open-webui-data:/app/open-webui-data
       - /app/backend/__pycache__
     working_dir: /app/backend
     ports:
       - "8000:8000"
+      - "8080:8080"
     environment:
       - PYTHONPATH=/app/backend
       - PYTHONUNBUFFERED=1
+      - OPEN_WEBUI_VENV=/opt/open-webui-env
+      - OPEN_WEBUI_DATA_DIR=/app/open-webui-data
+      - OPEN_WEBUI_PORT=8080
     command: >
       sh -c "pip install -r requirements.txt &&
              uvicorn main:app --host 0.0.0.0 --port 8000 --reload"
@@ -65,16 +70,21 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
+      - ./open-webui-data:/app/open-webui-data
       - /app/backend/__pycache__
       - /app/frontend/node_modules
     working_dir: /app
     ports:
       - "3000:3000"
       - "8000:8000"
+      - "8080:8080"
     environment:
       - PYTHONPATH=/app/backend
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - CHOKIDAR_USEPOLLING=true
+      - OPEN_WEBUI_VENV=/opt/open-webui-env
+      - OPEN_WEBUI_DATA_DIR=/app/open-webui-data
+      - OPEN_WEBUI_PORT=8080
     command:
       - /bin/bash
       - -c
@@ -95,17 +105,22 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
+      - ./open-webui-data:/app/open-webui-data
       - /app/backend/__pycache__
       - /app/frontend/node_modules
     working_dir: /app
     ports:
       - "3000:3000"
       - "8000:8000"
+      - "8080:8080"
       - "9229:9229"
     environment:
       - PYTHONPATH=/app/backend
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - CHOKIDAR_USEPOLLING=true
+      - OPEN_WEBUI_VENV=/opt/open-webui-env
+      - OPEN_WEBUI_DATA_DIR=/app/open-webui-data
+      - OPEN_WEBUI_PORT=8080
     stdin_open: true
     tty: true
     command: /bin/bash
@@ -124,18 +139,23 @@ services:
     volumes:
       - ./backend:/app/backend
       - ./frontend:/app/frontend
+      - ./open-webui-data:/app/open-webui-data
       - /app/backend/__pycache__
       - /app/frontend/node_modules
     working_dir: /app
     ports:
       - "3000:3000"
       - "8000:8000"
+      - "8080:8080"
     environment:
       - PYTHONPATH=/app/backend
       - PYTHONUNBUFFERED=1
       - PRIVATEAI_TEST_MODE=true
       - NEXT_PUBLIC_API_URL=http://localhost:8000
       - CHOKIDAR_USEPOLLING=true
+      - OPEN_WEBUI_VENV=/opt/open-webui-env
+      - OPEN_WEBUI_DATA_DIR=/app/open-webui-data
+      - OPEN_WEBUI_PORT=8080
     command:
       - /bin/bash
       - -c

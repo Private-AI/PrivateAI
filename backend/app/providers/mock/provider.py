@@ -49,7 +49,6 @@ SETUP_STEPS = [
     ("nvidia_driver", "Installing NVIDIA driver"),
     ("install_ollama", "Installing and configuring Ollama"),
     ("pull_models", "Pulling AI models"),
-    ("install_open_webui", "Installing Open WebUI"),
 ]
 
 
@@ -85,6 +84,7 @@ class MockProvider(CloudProviderBase):
                 "memory_gb": 320,
                 "confidential": True,
                 "description": "H100 GPU with AMD SEV-SNP confidential computing.",
+                "cost_per_hour": 35.00,
             },
             {
                 "id": "a100-standard",
@@ -96,6 +96,7 @@ class MockProvider(CloudProviderBase):
                 "memory_gb": 220,
                 "confidential": False,
                 "description": "A100 GPU for large model inference.",
+                "cost_per_hour": 3.67,
             },
             {
                 "id": "t4-standard",
@@ -107,6 +108,7 @@ class MockProvider(CloudProviderBase):
                 "memory_gb": 28,
                 "confidential": False,
                 "description": "T4 GPU for smaller models.",
+                "cost_per_hour": 0.53,
             },
             {
                 "id": "test-no-gpu",
@@ -118,6 +120,7 @@ class MockProvider(CloudProviderBase):
                 "memory_gb": 8,
                 "confidential": False,
                 "description": "Cheap VM for testing (~$0.10/hr).",
+                "cost_per_hour": 0.10,
             },
         ]
 
@@ -181,22 +184,6 @@ class MockProvider(CloudProviderBase):
 
         for i, (step_id, label) in enumerate(SETUP_STEPS):
             now = datetime.now(timezone.utc)
-            # Skip open-webui if not requested
-            if step_id == "install_open_webui" and not config.setup.deploy_open_webui:
-                steps.append(
-                    StepProgress(
-                        step=step_id,
-                        label=label,
-                        status="completed",
-                        detail="skipped",
-                        started_at=now,
-                        completed_at=now,
-                    )
-                )
-                if progress_callback:
-                    progress_callback(step_id, i + 1, total, "skipped")
-                continue
-
             step = StepProgress(step=step_id, label=label, status="in_progress", started_at=now)
             steps.append(step)
             if progress_callback:
@@ -290,7 +277,4 @@ class MockProvider(CloudProviderBase):
     ) -> ServiceEndpoints:
         ssh = f"ssh azureuser@{public_ip}" if public_ip else ""
         ollama = f"http://{public_ip}:11434" if public_ip else ""
-        open_webui = ""
-        if config.setup.deploy_open_webui and public_ip:
-            open_webui = f"http://{public_ip}:{config.setup.open_webui_port}"
-        return ServiceEndpoints(ssh=ssh, ollama_api=ollama, open_webui=open_webui)
+        return ServiceEndpoints(ssh=ssh, ollama_api=ollama)

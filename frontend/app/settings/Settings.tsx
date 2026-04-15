@@ -7,8 +7,22 @@ import {
   IconCheck,
   IconShield,
   IconClock,
+  IconDollar,
+  IconChat,
+  IconLoader,
 } from "@/app/components/icons";
-import type { AzureCredentials } from "@/app/lib/types";
+import type {
+  AzureCredentials,
+  BudgetConfig,
+  BudgetAction,
+  OpenWebuiEnvConfig,
+} from "@/app/lib/types";
+import {
+  fetchBudget,
+  setBudget,
+  fetchOpenWebuiConfig,
+  updateOpenWebuiConfig,
+} from "@/app/lib/api";
 import {
   getSettings,
   saveSettings,
@@ -75,9 +89,28 @@ export default function Settings({ onNavigate }: SettingsProps) {
   const [history, setHistory] = useState<DeploymentHistoryEntry[]>([]);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
 
+  // Budget state
+  const [budgetEnabled, setBudgetEnabled] = useState(true);
+  const [maxTotalSpend, setMaxTotalSpend] = useState("");
+  const [maxPerDeploySpend, setMaxPerDeploySpend] = useState("");
+  const [maxHourlyRate, setMaxHourlyRate] = useState("");
+  const [budgetActionAt100, setBudgetActionAt100] = useState<BudgetAction>("stop");
+  const [budgetLoading, setBudgetLoading] = useState(false);
+
+  // Open WebUI config state
+  const [webuiOllamaUrls, setWebuiOllamaUrls] = useState("");
+  const [webuiPort, setWebuiPort] = useState("8080");
+  const [webuiName, setWebuiName] = useState("PrivateAI Chat");
+  const [webuiEnableSignup, setWebuiEnableSignup] = useState(true);
+  const [webuiDefaultModels, setWebuiDefaultModels] = useState("");
+  const [webuiEnableRag, setWebuiEnableRag] = useState(true);
+  const [webuiLoading, setWebuiLoading] = useState(false);
+
   const credentialsFeedback = useFeedback();
   const preferencesFeedback = useFeedback();
   const historyFeedback = useFeedback();
+  const budgetFeedback = useFeedback();
+  const webuiFeedback = useFeedback();
 
   // --- Load on mount -------------------------------------------------------
   useEffect(() => {
@@ -86,6 +119,34 @@ export default function Settings({ onNavigate }: SettingsProps) {
     setDefaultRegion(s.defaultRegion);
     setDefaultModels(s.defaultModels.join(", "));
     setHistory(getDeploymentHistory());
+
+    // Load budget from backend
+    fetchBudget()
+      .then((budget) => {
+        setBudgetEnabled(budget.enabled);
+        setMaxTotalSpend(budget.max_total_spend_usd > 0 ? String(budget.max_total_spend_usd) : "");
+        setMaxPerDeploySpend(budget.max_per_deployment_spend_usd > 0 ? String(budget.max_per_deployment_spend_usd) : "");
+        setMaxHourlyRate(budget.max_hourly_rate_usd > 0 ? String(budget.max_hourly_rate_usd) : "");
+        const actionThreshold = budget.thresholds.find((t) => t.percent >= 100);
+        if (actionThreshold) setBudgetActionAt100(actionThreshold.action);
+      })
+      .catch(() => {
+        // Backend unreachable — use defaults
+      });
+
+    // Load Open WebUI config from backend
+    fetchOpenWebuiConfig()
+      .then((cfg) => {
+        setWebuiOllamaUrls(cfg.ollama_base_urls);
+        setWebuiPort(String(cfg.port));
+        setWebuiName(cfg.webui_name);
+        setWebuiEnableSignup(cfg.enable_signup);
+        setWebuiDefaultModels(cfg.default_models);
+        setWebuiEnableRag(cfg.enable_rag);
+      })
+      .catch(() => {
+        // Backend unreachable
+      });
   }, []);
 
   // --- Handlers ------------------------------------------------------------
@@ -107,6 +168,56 @@ export default function Settings({ onNavigate }: SettingsProps) {
     );
     preferencesFeedback.show("Preferences saved");
   }, [defaultRegion, defaultModels, preferencesFeedback]);
+
+  const handleSaveBudget = useCallback(async () => {
+    setBudgetLoading(true);
+    try {
+      const budget: BudgetConfig = {
+        max_total_spend_usd: parseFloat(maxTotalSpend) || 0,
+        max_per_deployment_spend_usd: parseFloat(maxPerDeploySpend) || 0,
+        max_hourly_rate_usd: parseFloat(maxHourlyRate) || 0,
+        enabled: budgetEnabled,
+        thresholds: [
+          { percent: 50, action: "alert" as BudgetAction, triggered: false, triggered_at: null },
+          { percent: 80, action: "alert" as BudgetAction, triggered: false, triggered_at: null },
+          { percent: 100, action: budgetActionAt100, triggered: false, triggered_at: null },
+        ],
+      };
+      await setBudget(budget);
+      saveSettings({ budgetConfig: budget });
+      budgetFeedback.show("Budget saved");
+    } catch {
+      budgetFeedback.show("Failed to save budget");
+    } finally {
+      setBudgetLoading(false);
+    }
+  }, [maxTotalSpend, maxPerDeploySpend, maxHourlyRate, budgetEnabled, budgetActionAt100, budgetFeedback]);
+
+  const handleSaveWebuiConfig = useCallback(async () => {
+    setWebuiLoading(true);
+    try {
+      const config: OpenWebuiEnvConfig = {
+        ollama_base_urls: webuiOllamaUrls,
+        port: parseInt(webuiPort) || 8080,
+        data_dir: "/app/open-webui-data",
+        webui_name: webuiName,
+        enable_signup: webuiEnableSignup,
+        default_models: webuiDefaultModels,
+        webui_secret_key: "privateai-secret-key",
+        enable_rag: webuiEnableRag,
+      };
+      const result = await updateOpenWebuiConfig(config);
+      webuiFeedback.show(
+        result.restarted
+          ? "Configuration saved and Open WebUI restarted"
+          : "Configuration saved",
+      );
+    } catch {
+      webuiFeedback.show("Failed to save configuration");
+    } finally {
+      setWebuiLoading(false);
+    }
+  }, [webuiOllamaUrls, webuiPort, webuiName, webuiEnableSignup, webuiDefaultModels, webuiEnableRag, webuiFeedback]);
 
   const handleClearHistory = useCallback(() => {
     if (!confirmClearHistory) {
@@ -271,11 +382,339 @@ export default function Settings({ onNavigate }: SettingsProps) {
         </section>
 
         {/* ================================================================
-            3. Deployment History
+            3. Cost Budget
             ================================================================ */}
         <section
           className="card p-5"
           style={{ animation: "slide-up 0.3s ease-out 0.16s both" }}
+        >
+          <div className="mb-4 flex items-center gap-2">
+            <IconDollar size={18} className="text-accent" />
+            <h2 className="text-base font-semibold text-foreground">
+              Cost Budget
+            </h2>
+          </div>
+
+          <p className="mb-4 text-sm text-muted">
+            Set spending limits to automatically shut down resources when
+            exceeded. The backend monitors costs in real-time.
+          </p>
+
+          <div className="space-y-4">
+            {/* Enable toggle */}
+            <div className="flex items-center gap-3">
+              <label htmlFor="budget-enabled" className="text-sm font-medium text-muted">
+                Cost monitoring
+              </label>
+              <button
+                id="budget-enabled"
+                type="button"
+                role="switch"
+                aria-checked={budgetEnabled}
+                onClick={() => setBudgetEnabled((prev) => !prev)}
+                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                  budgetEnabled ? "bg-[var(--accent)]" : "bg-[var(--border-color)]"
+                }`}
+              >
+                <span
+                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                    budgetEnabled ? "translate-x-6" : "translate-x-1"
+                  }`}
+                />
+              </button>
+              <span className="text-xs text-muted">
+                {budgetEnabled ? "Active" : "Disabled"}
+              </span>
+            </div>
+
+            {/* Max total spend */}
+            <div>
+              <label
+                htmlFor="budget-total"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Maximum Total Spend (USD)
+              </label>
+              <input
+                id="budget-total"
+                type="number"
+                className="input"
+                placeholder="e.g. 100.00 (0 = unlimited)"
+                value={maxTotalSpend}
+                onChange={(e) => setMaxTotalSpend(e.target.value)}
+                min="0"
+                step="1"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Total spending limit across all deployments. Set to 0 or leave
+                empty for no limit.
+              </p>
+            </div>
+
+            {/* Max per-deployment spend */}
+            <div>
+              <label
+                htmlFor="budget-per-deploy"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Max Per-Deployment Spend (USD)
+              </label>
+              <input
+                id="budget-per-deploy"
+                type="number"
+                className="input"
+                placeholder="e.g. 50.00 (0 = unlimited)"
+                value={maxPerDeploySpend}
+                onChange={(e) => setMaxPerDeploySpend(e.target.value)}
+                min="0"
+                step="1"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Individual deployment spending cap (overridable per-deployment)
+              </p>
+            </div>
+
+            {/* Max hourly rate */}
+            <div>
+              <label
+                htmlFor="budget-hourly"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Max Hourly Rate (USD/hr)
+              </label>
+              <input
+                id="budget-hourly"
+                type="number"
+                className="input"
+                placeholder="e.g. 40.00 (0 = unlimited)"
+                value={maxHourlyRate}
+                onChange={(e) => setMaxHourlyRate(e.target.value)}
+                min="0"
+                step="0.01"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Alert when combined hourly rate of all running VMs exceeds this
+              </p>
+            </div>
+
+            {/* Action at 100% */}
+            <div>
+              <label
+                htmlFor="budget-action"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Action When Budget Exceeded
+              </label>
+              <select
+                id="budget-action"
+                className="input"
+                value={budgetActionAt100}
+                onChange={(e) => setBudgetActionAt100(e.target.value as BudgetAction)}
+              >
+                <option value="alert">Alert only (notify but keep running)</option>
+                <option value="stop">Stop VMs (deallocate, preserves disks)</option>
+                <option value="destroy">Destroy all resources (irreversible)</option>
+              </select>
+              <p className="mt-1 text-xs text-muted">
+                What happens when 100% of the budget is reached. Alerts at 50%
+                and 80% are always sent.
+              </p>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={handleSaveBudget}
+                disabled={budgetLoading}
+              >
+                {budgetLoading ? (
+                  <IconLoader size={14} />
+                ) : (
+                  <IconCheck size={14} />
+                )}
+                Save Budget
+              </button>
+              {budgetFeedback.message && (
+                <FeedbackText text={budgetFeedback.message} />
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ================================================================
+            4. Open WebUI Configuration
+            ================================================================ */}
+        <section
+          className="card p-5"
+          style={{ animation: "slide-up 0.3s ease-out 0.24s both" }}
+        >
+          <div className="mb-4 flex items-center gap-2">
+            <IconChat size={18} className="text-accent" />
+            <h2 className="text-base font-semibold text-foreground">
+              Open WebUI
+            </h2>
+          </div>
+
+          <p className="mb-4 text-sm text-muted">
+            Configure the local Open WebUI instance. Changes to a running
+            instance trigger an automatic restart.
+          </p>
+
+          <div className="space-y-4">
+            {/* Ollama URL */}
+            <div>
+              <label
+                htmlFor="webui-ollama-urls"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Ollama Server URL(s)
+              </label>
+              <input
+                id="webui-ollama-urls"
+                type="text"
+                className="input"
+                placeholder="http://20.42.83.157:11434"
+                value={webuiOllamaUrls}
+                onChange={(e) => setWebuiOllamaUrls(e.target.value)}
+              />
+              <p className="mt-1 text-xs text-muted">
+                The Ollama API base URL from your provisioned cloud VM.
+                Semicolon-separated for multiple servers.
+              </p>
+            </div>
+
+            {/* Port */}
+            <div>
+              <label
+                htmlFor="webui-port"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Local Port
+              </label>
+              <input
+                id="webui-port"
+                type="number"
+                className="input"
+                value={webuiPort}
+                onChange={(e) => setWebuiPort(e.target.value)}
+                min="1024"
+                max="65535"
+              />
+              <p className="mt-1 text-xs text-muted">
+                Port Open WebUI listens on locally (default: 8080)
+              </p>
+            </div>
+
+            {/* Display name */}
+            <div>
+              <label
+                htmlFor="webui-name"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Display Name
+              </label>
+              <input
+                id="webui-name"
+                type="text"
+                className="input"
+                value={webuiName}
+                onChange={(e) => setWebuiName(e.target.value)}
+              />
+            </div>
+
+            {/* Default model */}
+            <div>
+              <label
+                htmlFor="webui-default-models"
+                className="mb-1.5 block text-sm font-medium text-muted"
+              >
+                Default Model
+              </label>
+              <input
+                id="webui-default-models"
+                type="text"
+                className="input"
+                placeholder="e.g. gemma3:4b"
+                value={webuiDefaultModels}
+                onChange={(e) => setWebuiDefaultModels(e.target.value)}
+              />
+            </div>
+
+            {/* Toggles */}
+            <div className="flex flex-col gap-3">
+              <div className="flex items-center gap-3">
+                <label htmlFor="webui-signup" className="text-sm font-medium text-muted">
+                  Allow signups
+                </label>
+                <button
+                  id="webui-signup"
+                  type="button"
+                  role="switch"
+                  aria-checked={webuiEnableSignup}
+                  onClick={() => setWebuiEnableSignup((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    webuiEnableSignup ? "bg-[var(--accent)]" : "bg-[var(--border-color)]"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      webuiEnableSignup ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+
+              <div className="flex items-center gap-3">
+                <label htmlFor="webui-rag" className="text-sm font-medium text-muted">
+                  Enable RAG (document upload)
+                </label>
+                <button
+                  id="webui-rag"
+                  type="button"
+                  role="switch"
+                  aria-checked={webuiEnableRag}
+                  onClick={() => setWebuiEnableRag((prev) => !prev)}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
+                    webuiEnableRag ? "bg-[var(--accent)]" : "bg-[var(--border-color)]"
+                  }`}
+                >
+                  <span
+                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                      webuiEnableRag ? "translate-x-6" : "translate-x-1"
+                    }`}
+                  />
+                </button>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                className="btn btn-primary btn-sm"
+                onClick={handleSaveWebuiConfig}
+                disabled={webuiLoading}
+              >
+                {webuiLoading ? (
+                  <IconLoader size={14} />
+                ) : (
+                  <IconCheck size={14} />
+                )}
+                Save Configuration
+              </button>
+              {webuiFeedback.message && (
+                <FeedbackText text={webuiFeedback.message} />
+              )}
+            </div>
+          </div>
+        </section>
+
+        {/* ================================================================
+            5. Deployment History
+            ================================================================ */}
+        <section
+          className="card p-5"
+          style={{ animation: "slide-up 0.3s ease-out 0.32s both" }}
         >
           <div className="mb-4 flex items-center gap-2">
             <IconClock size={18} className="text-accent" />
@@ -327,11 +766,11 @@ export default function Settings({ onNavigate }: SettingsProps) {
         </section>
 
         {/* ================================================================
-            4. About
+            6. About
             ================================================================ */}
         <section
           className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out 0.24s both" }}
+          style={{ animation: "slide-up 0.3s ease-out 0.40s both" }}
         >
           <h2 className="mb-3 text-base font-semibold text-foreground">
             About

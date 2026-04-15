@@ -33,7 +33,6 @@ def production_config() -> DeploymentConfig:
         data_disk_size_gb=1024,
         setup=SetupConfig(
             models=["gemma3:27b-fp16", "gemma3:4b"],
-            deploy_open_webui=False,
         ),
     )
 
@@ -53,7 +52,6 @@ def test_config() -> DeploymentConfig:
         data_disk_size_gb=32,
         setup=SetupConfig(
             models=["gemma3:4b"],
-            deploy_open_webui=False,
         ),
     )
 

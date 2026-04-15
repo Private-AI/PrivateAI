@@ -1,7 +1,23 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
-import { IconHome, IconPlus, IconSettings, IconChevronRight } from "./icons";
+import {
+  IconHome,
+  IconPlus,
+  IconSettings,
+  IconChevronRight,
+  IconChat,
+  IconLoader,
+  IconPlay,
+  IconStop,
+  IconExternalLink,
+} from "./icons";
+import {
+  fetchOpenWebuiStatus,
+  startOpenWebui,
+  stopOpenWebui,
+} from "@/app/lib/api";
+import type { OpenWebuiState } from "@/app/lib/types";
 
 const STORAGE_KEY = "privateai_sidebar_collapsed";
 
@@ -113,6 +129,9 @@ export default function Sidebar({
         </ul>
       </nav>
 
+      {/* Open WebUI status */}
+      <SidebarWebUI collapsed={isCollapsed} />
+
       {/* Collapse toggle */}
       <div className="border-t border-border p-2">
         <button
@@ -129,5 +148,144 @@ export default function Sidebar({
         </button>
       </div>
     </aside>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Sidebar Open WebUI widget
+// ---------------------------------------------------------------------------
+
+function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
+  const [state, setState] = useState<OpenWebuiState | null>(null);
+  const [actionLoading, setActionLoading] = useState(false);
+
+  useEffect(() => {
+    let active = true;
+    const poll = async () => {
+      try {
+        const s = await fetchOpenWebuiStatus();
+        if (active) setState(s);
+      } catch {
+        // ignore
+      }
+    };
+    poll();
+    const id = setInterval(poll, 8000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
+  }, []);
+
+  const handleToggle = useCallback(async () => {
+    if (!state) return;
+    setActionLoading(true);
+    try {
+      if (state.status === "running") {
+        await stopOpenWebui();
+      } else {
+        await startOpenWebui();
+      }
+      const s = await fetchOpenWebuiStatus();
+      setState(s);
+    } catch {
+      // ignore
+    } finally {
+      setActionLoading(false);
+    }
+  }, [state]);
+
+  if (!state) return null;
+
+  const isRunning = state.status === "running";
+  const dotColor = isRunning
+    ? "bg-[var(--success)]"
+    : state.status === "error"
+      ? "bg-[var(--error)]"
+      : "bg-[var(--muted)]";
+
+  if (collapsed) {
+    return (
+      <div className="border-t border-border p-2 flex flex-col items-center gap-1.5">
+        <button
+          onClick={handleToggle}
+          disabled={actionLoading || state.status === "not_installed"}
+          title={
+            isRunning
+              ? `Open WebUI running${state.connected_deployment_name ? ` — ${state.connected_deployment_name}` : ""}`
+              : "Start Open WebUI"
+          }
+          className="btn btn-ghost btn-icon relative"
+        >
+          {actionLoading ? (
+            <IconLoader size={16} className="text-[var(--muted)]" />
+          ) : (
+            <IconChat size={16} className={isRunning ? "text-[var(--accent)]" : "text-[var(--muted)]"} />
+          )}
+          <span className={`absolute top-0.5 right-0.5 h-2 w-2 rounded-full ${dotColor}`} />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="border-t border-border px-3 py-3 flex flex-col gap-2">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2 min-w-0">
+          <IconChat size={14} className="shrink-0 text-[var(--accent)]" />
+          <span className="text-xs font-medium text-[var(--fg)] truncate">
+            Open WebUI
+          </span>
+          <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
+        </div>
+        <div className="flex items-center gap-1">
+          {isRunning && state.url && (
+            <a
+              href={state.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="btn btn-ghost btn-icon btn-sm"
+              title="Open in browser"
+            >
+              <IconExternalLink size={12} />
+            </a>
+          )}
+          <button
+            onClick={handleToggle}
+            disabled={actionLoading || state.status === "not_installed" || state.status === "starting" || state.status === "stopping"}
+            className="btn btn-ghost btn-icon btn-sm"
+            title={isRunning ? "Stop" : "Start"}
+          >
+            {actionLoading ? (
+              <IconLoader size={12} />
+            ) : isRunning ? (
+              <IconStop size={12} className="text-[var(--error)]" />
+            ) : (
+              <IconPlay size={12} className="text-[var(--success)]" />
+            )}
+          </button>
+        </div>
+      </div>
+
+      {/* Connected deployment */}
+      {isRunning && state.connected_deployment_name && (
+        <p className="text-[10px] text-[var(--muted)] truncate pl-5">
+          Connected to {state.connected_deployment_name}
+        </p>
+      )}
+
+      {/* Error */}
+      {state.status === "error" && (
+        <p className="text-[10px] text-[var(--error)] truncate pl-5">
+          {state.error}
+        </p>
+      )}
+
+      {state.status === "not_installed" && (
+        <p className="text-[10px] text-[var(--muted)] pl-5">
+          Not installed
+        </p>
+      )}
+    </div>
   );
 }
