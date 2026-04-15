@@ -1,25 +1,55 @@
-# Testing Procedure
+# Backend Testing Procedure
 
-Testing is organized into five phases, ordered by cost. Phases 1 and 2 are
-free and should run in CI on every push. Phases 3-5 create real Azure
-resources and are opt-in via environment variables.
+This guide is the canonical test plan for validating the backend with strong emphasis on:
 
-**Total test count:** 126 (110 offline + 16 live)
+- Azure SDK provisioning correctness
+- Provisioning/setup script behavior (`provider.py`, `vm_setup.py`, `validator.py`)
+- Networking and service reachability (SSH, Ollama, Open WebUI)
+- Cost-safe progression from `Standard_D2s_v5` to H100
+
+The strategy is intentionally staged so you can prove reliability on cheap infrastructure before spending on GPU VMs.
 
 ---
 
-## Prerequisites
+## 1) Testing Goals
+
+By the time you finish this plan, you should be confident that:
+
+1. Azure resources are created correctly and consistently through the SDK.
+2. VM setup scripts are robust (idempotent enough, retry-safe, clear failures).
+3. Ollama and Open WebUI are configured correctly and reachable from expected networks.
+4. Lifecycle actions (`start`, `stop`, `destroy`, `auto-shutdown`) behave correctly.
+5. H100 testing is only started after objective D2s_v5 gates are met.
+
+---
+
+## 2) Test Pyramid for This Project
+
+Use this order every time:
+
+1. Offline tests (fast, free): lint, config translation, API wiring
+2. Mock-provider API tests (fast, free): orchestration behavior without cloud spend
+3. Live Azure SDK tests on `Standard_D2s_v5` (cheap): infra + setup + networking
+4. Repeatability and failure-mode tests on `Standard_D2s_v5`
+5. Minimal, targeted H100 validation
+
+Do not jump to H100 until D2s_v5 gates pass.
+
+---
+
+## 3) Prerequisites
+
+### Local setup
 
 ```bash
 cd backend
-
-# Install runtime + test dependencies
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
 pip install pytest httpx
 ```
 
-For Phase 3+ (live Azure tests), you also need a service principal with
-Contributor access on the target subscription:
+### Required Azure credentials (service principal)
 
 ```bash
 export AZURE_SUBSCRIPTION_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -28,301 +58,253 @@ export AZURE_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 export AZURE_CLIENT_SECRET="your-client-secret"
 ```
 
-An SSH key pair at `~/.ssh/id_ed25519` is required for Phase 3+ tests that
-SSH into the provisioned VM. If one doesn't exist, the provisioner will
-generate it automatically.
+### Optional but recommended environment values
+
+```bash
+export AZURE_TEST_LIVE=true
+export AZURE_LOCATION=eastus
+export PRIVATEAI_TEST_MODE=false
+```
+
+### SSH key
+
+- Setup and validation use `~/.ssh/id_ed25519` by default.
+- If missing, provisioning may generate one, but pre-creating it is more deterministic.
 
 ---
 
-## Phase 1: Static Analysis
+## 4) Cost Guardrails (Read First)
 
-**Cost: $0** | **Time: <1 second** | **File: `tests/test_lint.py`** | **Tests: 66**
+1. Always run cheap phases first.
+2. Use `Standard_D2s_v5` as the default live test VM.
+3. Always include teardown steps in every run.
+4. Tag and isolate test resource groups (for easy cleanup).
+5. Never leave VMs running overnight; test `auto-shutdown` in pre-H100 phase.
 
-Validates code structure, imports, and hygiene without touching any cloud
-API.
+---
+
+## 5) Fast Command Reference
+
+```bash
+# Phase 1-2 (free)
+pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v
+
+# Phase 3 baseline live cheap VM
+AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
+
+# Extended Phase 3 live suite (Azure SDK + setup + network + recovery + negative)
+AZURE_TEST_LIVE=true pytest tests/test_phase3_*.py -m phase3 -v -s
+
+# Run only the Ollama/Open WebUI setup validation
+AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s
+
+# Phase 4 remote validation (existing baseline)
+AZURE_TEST_VM_IP=<PUBLIC_IP> pytest tests/test_validate_remote.py -m phase4 -v -s
+
+# Teardown utility
+AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
+```
+
+## 5.1) Recommended Run Order (Live D2s_v5)
+
+Use this order to maximize signal while minimizing spend.
+
+| Order | Command | Primary purpose | Typical duration | Relative cost |
+|------:|---------|-----------------|------------------|---------------|
+| 1 | `pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v` | Free preflight correctness | 1-2 min | $0 |
+| 2 | `AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s` | Baseline end-to-end infra + lifecycle | 8-15 min | Low |
+| 3 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_sdk_assertions.py -m phase3 -v -s` | Azure SDK resource correctness (NSG/NIC/tags/disks) | 8-15 min | Low |
+| 4 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s` | Provisioning scripts + Ollama/Open WebUI setup validation | 12-25 min | Low-Medium |
+| 5 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_network_restrictions.py -m phase3 -v -s` | CIDR restrictions and endpoint reachability | 10-20 min | Low-Medium |
+| 6 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_recovery_paths.py -m phase3 -v -s` | Stop/start loops and setup/validate recovery | 12-22 min | Medium |
+| 7 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_negative_inputs.py -m phase3 -v -s` | Error handling and input hardening | 10-20 min | Low-Medium |
+| 8 | `AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s` | Final cleanup verification | 1-5 min | $0-$ |
+
+Notes:
+
+- Durations vary by region load, VM allocation delays, and package download speed.
+- Relative cost stays low because all live phases use `Standard_D2s_v5`.
+- For quick daily confidence, run steps 1, 2, and 4; run full sequence before milestones.
+
+## 5.2) Pass/Fail Exit Criteria by Step
+
+Use this table to decide if you can proceed to the next step.
+
+| Step | Must-pass exit criteria | Stop conditions |
+|------|-------------------------|-----------------|
+| 1 | All tests pass, no import/schema failures | Any failed test in lint/dry-run/API |
+| 2 | Provision succeeds, SSH check passes, stop/start passes, teardown succeeds | Provision failure, lifecycle mismatch, teardown failure |
+| 3 | RG/NSG/NIC/PIP/VM/disk assertions all pass | Tag mismatch, missing ports/rules, VM/disk mismatch |
+| 4 | Setup result success, validator confirms Ollama + Open WebUI checks, remote HTTP reachable | Setup failure, Ollama service/API failure, WebUI container or HTTP failure |
+| 5 | NSG source prefixes match expected CIDR and allowed-source connectivity checks pass | Source prefix mismatch, expected ports unreachable from allowed source |
+| 6 | 3 stop/start cycles pass, setup rerun succeeds, post-recovery validate passes | Any cycle fails, setup rerun fails, validation regresses |
+| 7 | Negative tests fail safely with expected error behavior, no crash/no orphaned resources | Unhandled exception, ambiguous errors, leaked resources |
+| 8 | Resource groups deleted, no billable test VM left running, state artifacts cleaned | Any leftover RG/VM or persistent state artifacts |
+
+Promotion gate to H100:
+
+- Only proceed if steps 1-8 pass in sequence at least once.
+- For milestone release confidence, run steps 2-7 on at least 2 regions before H100.
+
+---
+
+## 6) Detailed Phases
+
+## Phase 0 - Preflight and Safety Checks (Free)
+
+Purpose: catch environment and account issues before provisioning.
+
+### Checklist
+
+- Verify credentials are set and non-empty.
+- Validate service principal access.
+- Confirm target region supports `Standard_D2s_v5`.
+- Confirm no stale test RG from previous failed run.
+
+### Suggested commands
+
+```bash
+python - <<'PY'
+import os
+required = [
+    "AZURE_SUBSCRIPTION_ID",
+    "AZURE_TENANT_ID",
+    "AZURE_CLIENT_ID",
+    "AZURE_CLIENT_SECRET",
+]
+missing = [k for k in required if not os.environ.get(k)]
+print("missing:", missing)
+PY
+```
+
+Start backend and validate credentials endpoint:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/providers/azure/validate-credentials \
+  -H "Content-Type: application/json" \
+  -d '{
+    "provider": "azure",
+    "subscription_id": "'"$AZURE_SUBSCRIPTION_ID"'",
+    "tenant_id": "'"$AZURE_TENANT_ID"'",
+    "client_id": "'"$AZURE_CLIENT_ID"'",
+    "client_secret": "'"$AZURE_CLIENT_SECRET"'"
+  }' | jq .
+```
+
+Expected: `valid: true` with an authentication message.
+
+---
+
+## Phase 1 - Offline Static and Contract Tests (Free)
+
+Purpose: fail fast before any cloud calls.
+
+### Run
 
 ```bash
 pytest tests/test_lint.py -m phase1 -v
-```
-
-### What it checks
-
-**TestImports (29 tests)**
-
-- Every module under `app/` imports without errors (21 parametrized cases
-  covering models, providers, services, and routers)
-- Key classes exist: `DeploymentConfig`, `DeploymentRecord`, `DeploymentStatus`,
-  `AzureCredentials`, `GCPCredentials`, `AWSCredentials`, `CloudProvider`,
-  `ProvisionResult`, `SetupResult`, `ValidationResult`, `VMStatusResult`
-- `AzureProvider` instantiates and reports `name == "azure"`
-- Provider registry returns at least one provider; `get_provider("azure")` works
-- `DeploymentOrchestrator` and `DeploymentStore` are callable/instantiable
-- FastAPI app loads with `title == "PrivateAI Backend"`
-
-**TestCodeQuality (37 tests)**
-
-- No hardcoded secrets in any source file (scans for `password=`, `secret=`,
-  `token=`, `api_key=` outside of comments, type hints, and Pydantic fields)
-- Every non-`__init__` module has a module-level docstring
-- All 21 expected source files exist at their expected paths
-
-### Expected output
-
-```
-tests/test_lint.py  66 passed in 0.66s
-```
-
----
-
-## Phase 2: Dry-Run Validation
-
-**Cost: $0** | **Time: <1 second** | **Files: `tests/test_dry_run.py`, `tests/test_api.py`** | **Tests: 44**
-
-Tests the provider-agnostic configuration models, Azure-specific parameter
-translation, image parsing, and every HTTP endpoint's wiring — all without
-making cloud API calls.
-
-```bash
-# Both files
-pytest tests/test_dry_run.py tests/test_api.py -m phase2 -v
-
-# Or individually
 pytest tests/test_dry_run.py -m phase2 -v
 pytest tests/test_api.py -m phase2 -v
 ```
 
-### test_dry_run.py (28 tests)
+### Must-pass scope
 
-**TestAzureConfigTranslation (11 tests)** — verifies that a
-provider-agnostic `DeploymentConfig` translates into correct Azure SDK
-parameters:
+- Model and schema imports
+- Provider registry behavior
+- Azure parameter translation (`build_azure_params`)
+- Image parsing logic (`parse_image_reference`)
+- Endpoint wiring and basic API error handling
 
-| Test | What it verifies |
-|------|------------------|
-| `test_confidential_vm_params` | `security_level=confidential` produces `ConfidentialVM`, `VMGuestStateOnly`, and confidential image |
-| `test_standard_vm_params` | `security_level=standard` produces `TrustedLaunch`, no disk encryption, standard image |
-| `test_location_propagates` | Region flows through to `location` |
-| `test_custom_location` | Non-default region (e.g. `westus3`) is respected |
-| `test_resource_group_propagates` | Resource group name flows through |
-| `test_derived_names` | NSG, VNet, subnet, PIP, NIC, and data disk names are derived correctly from RG/VM names |
-| `test_disk_sizes_propagate` | `os_disk_size_gb` and `data_disk_size_gb` flow through |
-| `test_cheap_vm_uses_standard_disks` | `Standard_D2s_v5` defaults to `Standard_LRS` disks |
-| `test_production_uses_premium_disks` | H100 VM defaults to `Premium_LRS` disks |
-| `test_nsg_sources_from_allowed_ips` | `allowed_ssh_sources` and `allowed_api_sources` map to NSG rules |
-| `test_disk_encryption_override` | `provider_options.disk_encryption` overrides the default |
-
-**TestImageParsing (4 tests)** — verifies OS image URN parsing:
-
-| Test | What it verifies |
-|------|------------------|
-| `test_parse_confidential_alias` | `ubuntu-confidential-22.04` resolves to Canonical CVM image |
-| `test_parse_standard_alias` | `ubuntu-22.04` resolves to Canonical server image |
-| `test_parse_full_urn` | `publisher:offer:sku:version` URN parses into four fields |
-| `test_invalid_image_raises` | Unrecognized string raises `ValueError` |
-
-**TestDeploymentConfig (5 tests)** — verifies provider-agnostic model
-defaults and validation:
-
-| Test | What it verifies |
-|------|------------------|
-| `test_production_defaults` | H100 config has correct provider, region, security level |
-| `test_test_defaults` | Cheap test config has `Standard_D2s_v5`, standard security |
-| `test_setup_config_defaults` | Default `SetupConfig`: `["gemma3:4b"]`, no Open WebUI, port 3000 |
-| `test_deployment_record_creation` | `DeploymentRecord` generates UUID, starts at `pending` status |
-| `test_vm_name_validation` | VM names must match `^[a-zA-Z0-9][a-zA-Z0-9\-]{0,62}$` |
-
-**TestAzureProvider (5 tests)** — verifies `AzureProvider` metadata methods
-that don't call the cloud:
-
-| Test | What it verifies |
-|------|------------------|
-| `test_regions` | At least 5 regions returned, includes `eastus` and `westeurope` |
-| `test_vm_sizes` | At least 3 profiles returned, includes `h100-confidential` and `test-no-gpu` |
-| `test_service_endpoints` | SSH/Ollama URLs built correctly; Open WebUI empty when not requested |
-| `test_service_endpoints_with_webui` | Open WebUI URL includes custom port when `deploy_open_webui=True` |
-| `test_service_endpoints_no_ip` | All endpoints are empty strings when no IP is available |
-
-**TestVMProfiles (3 tests)** — verifies predefined Azure VM profiles:
-
-| Test | What it verifies |
-|------|------------------|
-| `test_profiles_have_required_fields` | Every profile has id, name, vm_size, vcpus > 0, memory > 0 |
-| `test_h100_is_confidential` | H100 profile: `confidential=True`, `gpus >= 1` |
-| `test_test_vm_has_no_gpu` | Test profile: `gpus=0`, `confidential=False` |
-
-### test_api.py (16 tests)
-
-Uses FastAPI's `TestClient` to send real HTTP requests through the
-application without any network calls.
-
-**TestHealthEndpoints (2 tests)**
-
-| Test | What it verifies |
-|------|------------------|
-| `test_root` | `GET /` returns 200 with `"PrivateAI"` in message and a `version` field |
-| `test_health` | `GET /health` returns `{"status": "healthy"}` |
-
-**TestProviderEndpoints (4 tests)**
-
-| Test | What it verifies |
-|------|------------------|
-| `test_list_providers` | `GET /api/v1/providers` returns azure with regions |
-| `test_list_vm_sizes` | `GET /api/v1/providers/azure/vm-sizes` returns H100 profile |
-| `test_list_vm_sizes_unknown_provider` | Unknown provider returns 404 |
-| `test_validate_credentials_unknown_provider` | Unknown provider returns 404 |
-
-**TestDeploymentEndpoints (9 tests)**
-
-| Test | What it verifies |
-|------|------------------|
-| `test_list_deployments_empty` | `GET /api/v1/deployments` returns empty list |
-| `test_get_deployment_not_found` | Nonexistent ID returns 404 |
-| `test_start_deployment_not_found` | Start on nonexistent returns 404 |
-| `test_stop_deployment_not_found` | Stop on nonexistent returns 404 |
-| `test_destroy_deployment_not_found` | Delete on nonexistent returns 404 |
-| `test_setup_deployment_not_found` | Setup on nonexistent returns 404 |
-| `test_validate_deployment_not_found` | Validate on nonexistent returns 404 |
-| `test_services_deployment_not_found` | Services on nonexistent returns 404 |
-| `test_auto_shutdown_deployment_not_found` | Auto-shutdown on nonexistent returns 404 |
-
-**TestOpenAPISchema (1 test)**
-
-| Test | What it verifies |
-|------|------------------|
-| `test_openapi_json` | `/openapi.json` returns valid schema with correct title and expected paths |
-
-### Expected output
-
-```
-tests/test_dry_run.py  28 passed
-tests/test_api.py      16 passed
-                       44 passed in 0.84s
-```
+If anything fails here, stop. Do not run live tests.
 
 ---
 
-## Phase 3: Cheap VM Integration Test
+## Phase 2 - Mock-mode Orchestration Tests (Free)
 
-**Cost: ~$0.10/hour** | **Time: ~5 minutes** | **File: `tests/test_cheap_vm.py`** | **Tests: 6**
+Purpose: validate asynchronous orchestration and WS signaling without Azure spend.
 
-Deploys a real `Standard_D2s_v5` (2 vCPUs, 8 GB RAM, no GPU) on Azure to
-exercise the full provisioning pipeline end-to-end. Creates real resources
-that cost money — **must be torn down after testing**.
-
-Tests are numbered and must run in order. Do not use a test randomization
-plugin on this file.
-
-### Environment variables
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `AZURE_TEST_LIVE` | Yes | Must be `true` to run these tests |
-| `AZURE_SUBSCRIPTION_ID` | Yes | Azure subscription UUID |
-| `AZURE_TENANT_ID` | Yes | Azure AD tenant UUID |
-| `AZURE_CLIENT_ID` | Yes | Service principal client UUID |
-| `AZURE_CLIENT_SECRET` | Yes | Service principal secret |
-
-### Run
+### Setup
 
 ```bash
-# Full pipeline: deploy → validate → stop/start → teardown
+export PRIVATEAI_TEST_MODE=true
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+### Test objectives
+
+1. `POST /deployments` returns `202` immediately.
+2. WebSocket emits progress events and terminal status (`running` or `failed`).
+3. Dashboard polling endpoints (`/deployments`, `/deployments/{id}`, `/live`) remain coherent.
+4. Lifecycle calls (`start`, `stop`, `destroy`) update state machine as expected.
+
+### Recommendation
+
+- Keep this in CI because it validates orchestration semantics even when Azure is unavailable.
+
+---
+
+## Phase 3 - Live Azure SDK Provisioning on Standard_D2s_v5 (Cheap, Critical)
+
+Purpose: validate real Azure SDK provisioning steps and generated infrastructure.
+
+Baseline test file: `tests/test_cheap_vm.py`.
+Extended test files: `tests/test_phase3_*.py`.
+
+### Run baseline
+
+```bash
 AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
-
-# Teardown only (if a previous run failed partway through)
-AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -k teardown -v -s
 ```
 
-The `-s` flag is important — it shows live progress output from the Azure
-SDK.
+### What baseline covers today
 
-### What it checks
+- Provision RG + NSG + VNet + PIP + NIC + VM + data disk
+- VM status fetch
+- SSH connectivity
+- Validation pass (without GPU requirement)
+- Stop/start lifecycle
+- Teardown
 
-| Test | What it does | Azure resources involved |
-|------|-------------|--------------------------|
-| `test_01_deploy` | Provisions RG, NSG, VNet, PIP, NIC, VM, data disk | All 7 resource types |
-| `test_02_vm_status` | Queries VM power state and resource count | Compute + Resource APIs |
-| `test_03_ssh_connectivity` | SSH into VM, run `hostname` | VM network path |
-| `test_04_validate_remote` | Full validation suite over SSH (OS, disk) | SSH + VM internals |
-| `test_05_stop_and_start` | Deallocate → verify stopped → start → verify running | Compute lifecycle APIs |
-| `test_99_teardown` | Delete entire resource group | Resource group deletion |
+### Azure SDK assertions executed in extended suite
 
-### State persistence
+These checks are covered by the extended Phase 3 files:
 
-Test state (resource group, VM name, public IP) is saved to
-`/tmp/privateai-test-state.json` between tests so that later tests can
-pick up where earlier ones left off. The teardown test deletes this file.
-
-### What this does NOT test
-
-- GPU functionality (no GPU on `D2s_v5`)
-- Ollama installation (NVIDIA driver step will fail without a GPU)
-- Open WebUI deployment
-- Confidential VM security features (test VM uses `TrustedLaunch`)
-
-These are covered by Phase 5.
+1. **Resource tagging**
+   - All major resources contain expected tags (`project`, `created-by`).
+2. **NSG rules correctness**
+   - Inbound `22` exists.
+   - Inbound `11434` exists.
+   - Open WebUI port rule exists only when requested.
+3. **Network placement**
+   - NIC is attached to expected subnet.
+   - Public IP is static Standard SKU.
+4. **VM security profile**
+   - `TrustedLaunch` for standard security tests.
+   - No confidential-only assumptions on D2s_v5 stage.
+5. **Disk attachment**
+   - Data disk exists and attached at expected LUN.
 
 ---
 
-## Phase 4: Remote VM Validation
+## Phase 4 - Provisioning Script Validation on D2s_v5 (Setup + Validate)
 
-**Cost: $0** (uses an already-running VM) | **Time: ~30 seconds** | **File: `tests/test_validate_remote.py`** | **Tests: 7**
+Purpose: thoroughly test `vm_setup.py` and `validator.py` behavior on cheap VM.
 
-Runs the validation suite against any running VM. Use this after a Phase 3
-deploy, or point it at a production H100 VM to verify its health.
+This phase is mandatory before any H100 validation.
 
-### Environment variables
+Primary automated coverage:
 
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `AZURE_TEST_VM_IP` | Yes | Public IP of the target VM |
-| `AZURE_TEST_GPU` | No | Set to `true` to include GPU checks |
-| `AZURE_SUBSCRIPTION_ID` | Yes | Azure subscription UUID |
-| `AZURE_TENANT_ID` | Yes | Azure AD tenant UUID |
-| `AZURE_CLIENT_ID` | Yes | Service principal client UUID |
-| `AZURE_CLIENT_SECRET` | Yes | Service principal secret |
+- `tests/test_phase3_setup_ollama_webui.py`
+- `tests/test_phase3_recovery_paths.py`
+- `tests/test_phase3_negative_inputs.py`
 
-### Run
+### Deployment payload (D2s_v5 with setup enabled)
 
-```bash
-# Without GPU checks (test VM or any VM without GPU)
-AZURE_TEST_VM_IP=20.x.x.x pytest tests/test_validate_remote.py -m phase4 -v -s
-
-# With GPU checks (H100 or other GPU VM)
-AZURE_TEST_VM_IP=20.x.x.x AZURE_TEST_GPU=true pytest tests/test_validate_remote.py -m phase4 -v -s
-```
-
-### What it checks
-
-| Test | What it verifies | Skips if |
-|------|------------------|----------|
-| `test_full_validation` | Complete validation suite passes, SSH must succeed | — |
-| `test_ssh_connectivity` | SSH connection succeeds | — |
-| `test_system_info` | OS name, CPU count > 0, memory retrievable | — |
-| `test_data_disk` | `/models` exists (mounted or as directory) | — |
-| `test_gpu` | `nvidia-smi` returns GPU info | `AZURE_TEST_GPU != true` |
-| `test_ollama_service` | Ollama systemd service is active | Ollama not installed |
-| `test_ollama_api_remote` | Ollama API reachable at `http://<IP>:11434` | Ollama not running |
-
----
-
-## Phase 5: Full H100 Production Test
-
-**Cost: ~$35/hour** | **Target: 15-20 minutes = ~$10-15** | **Tests: manual via API**
-
-This phase tests the complete stack: Confidential VM with H100 GPU, NVIDIA
-driver, Ollama with GPU inference, model serving, and optionally Open WebUI.
-
-There are no automated pytest tests for this phase — it uses the live API.
-Destroy resources immediately after testing.
-
-### Step 1: Start the backend
-
-```bash
-cd backend
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
-```
-
-### Step 2: Create a deployment
+Use API-driven deployment (not just provider direct calls) to include orchestrator and WebSocket flow.
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/deployments \
@@ -330,206 +312,273 @@ curl -s -X POST http://localhost:8000/api/v1/deployments \
   -d '{
     "credentials": {
       "provider": "azure",
-      "subscription_id": "'$AZURE_SUBSCRIPTION_ID'",
-      "tenant_id": "'$AZURE_TENANT_ID'",
-      "client_id": "'$AZURE_CLIENT_ID'",
-      "client_secret": "'$AZURE_CLIENT_SECRET'"
+      "subscription_id": "'"$AZURE_SUBSCRIPTION_ID"'",
+      "tenant_id": "'"$AZURE_TENANT_ID"'",
+      "client_id": "'"$AZURE_CLIENT_ID"'",
+      "client_secret": "'"$AZURE_CLIENT_SECRET"'"
     },
     "config": {
       "provider": "azure",
       "region": "eastus",
-      "vm_size": "Standard_NCC40ads_H100_v5",
-      "security_level": "confidential",
+      "vm_name": "privateai-d2s-setup-test",
+      "resource_group": "privateai-d2s-setup-rg",
+      "vm_size": "Standard_D2s_v5",
+      "security_level": "standard",
       "setup": {
-        "models": ["gemma3:27b-fp16", "gemma3:4b"],
-        "deploy_open_webui": true
+        "models": ["gemma3:4b"],
+        "deploy_open_webui": true,
+        "open_webui_port": 3000
       }
     }
   }' | jq .
 ```
 
-Save the returned `id` value.
+### Validate setup step-by-step
 
-### Step 3: Monitor provisioning
+For the resulting VM IP:
 
-```bash
-# Poll status
-curl -s http://localhost:8000/api/v1/deployments/{id} | jq '.status, .public_ip'
+1. SSH connection becomes available within retry budget.
+2. `/models` exists and is mounted when disk attach succeeded.
+3. Ollama service is active.
+4. Ollama environment includes:
+   - `OLLAMA_HOST=0.0.0.0:11434`
+   - `OLLAMA_MODELS=/models/ollama`
+5. Model pull result includes requested model(s).
+6. Open WebUI container is running when requested.
 
-# Or connect WebSocket for real-time progress (requires wscat: npm i -g wscat)
-wscat -c ws://localhost:8000/api/v1/deployments/{id}/ws
-```
+### Expected D2s_v5 behavior for NVIDIA step
 
-### Step 4: Validate with GPU checks
-
-```bash
-curl -s -X POST "http://localhost:8000/api/v1/deployments/{id}/validate?check_gpu=true" | jq .
-```
-
-### Step 5: Test inference
-
-```bash
-VM_IP=$(curl -s http://localhost:8000/api/v1/deployments/{id} | jq -r '.public_ip')
-
-# Quick test
-curl -s http://$VM_IP:11434/api/generate \
-  -d '{"model":"gemma3:4b","prompt":"Say hello in 5 words.","stream":false}' | jq .response
-
-# Full precision model
-curl -s http://$VM_IP:11434/api/generate \
-  -d '{"model":"gemma3:27b-fp16","prompt":"Explain confidential computing in two sentences.","stream":false}' | jq .response
-
-# OpenAI-compatible endpoint
-curl -s http://$VM_IP:11434/v1/chat/completions \
-  -H "Content-Type: application/json" \
-  -d '{"model":"gemma3:4b","messages":[{"role":"user","content":"Hello"}]}' | jq .
-```
-
-### Step 6: Verify confidential computing (SSH)
-
-```bash
-ssh azureuser@$VM_IP
-
-# AMD SEV-SNP attestation
-dmesg | grep -i sev
-
-# vTPM present
-ls /dev/tpm*
-
-# Secure Boot state
-mokutil --sb-state
-```
-
-### Step 7: Set auto-shutdown (cost safety)
-
-```bash
-curl -s -X POST http://localhost:8000/api/v1/deployments/{id}/auto-shutdown \
-  -H "Content-Type: application/json" \
-  -d '{"time_utc": "1800"}' | jq .
-```
-
-### Step 8: Destroy immediately
-
-```bash
-curl -s -X DELETE http://localhost:8000/api/v1/deployments/{id} | jq .
-```
+- D2s_v5 has no GPU.
+- Setup should not hard-fail solely because GPU is absent.
+- If driver step is skipped, remaining steps (Ollama/Open WebUI) should still complete.
 
 ---
 
-## Teardown Utility
+## Phase 5 - Networking Validation (Ollama + Open WebUI)
 
-**File: `tests/test_teardown.py`** | **Tests: 3**
+Purpose: ensure real network exposure and access control work as intended.
 
-Standalone utility for cleaning up resources if a test run was interrupted
-or you need to manually destroy infrastructure.
+### A) Ollama local and remote checks
+
+From VM (SSH):
 
 ```bash
-# Destroy test resource group (trustgpt-test-rg)
-AZURE_TEST_LIVE=true pytest tests/test_teardown.py -k "test_rg" -v -s
-
-# Destroy production resource group (h100-conf-rg) — requires extra opt-in
-AZURE_TEST_LIVE=true AZURE_NUKE_PROD=true pytest tests/test_teardown.py -k "prod_rg" -v -s
-
-# Clean up local state files only (no cloud calls)
-pytest tests/test_teardown.py -k "cleanup" -v
+curl -sf http://localhost:11434/api/tags | jq .
+systemctl is-active ollama
+systemctl show ollama --property=Environment
 ```
+
+From test runner host:
+
+```bash
+curl -sf http://<VM_IP>:11434/api/tags | jq .
+curl -s http://<VM_IP>:11434/api/generate \
+  -d '{"model":"gemma3:4b","prompt":"ping","stream":false}' | jq .
+```
+
+Expected:
+
+- local endpoint responds
+- remote endpoint responds (if NSG allows source)
+- generate returns non-empty response
+
+### B) Open WebUI checks
+
+From VM (SSH):
+
+```bash
+sudo docker inspect --format='{{.State.Status}}' open-webui
+curl -sf http://localhost:3000 >/dev/null
+```
+
+From test runner host:
+
+```bash
+curl -I http://<VM_IP>:3000
+```
+
+Expected:
+
+- container state is `running`
+- HTTP reachable on configured port
+- if custom port is used, only that port should be open (plus required ports)
+
+### C) NSG source filtering checks
+
+Run at least two scenarios:
+
+1. Wide open test (`*`) for rapid bring-up.
+2. Restricted CIDR test (your runner IP only).
+
+Verify behavior:
+
+- Allowed source can access `22`, `11434`, and WebUI port.
+- Non-allowed source cannot access restricted ports.
 
 ---
 
-## Quick Reference
+## Phase 6 - Lifecycle, Recovery, and Idempotence Tests
+
+Purpose: validate operational reliability over repeated runs.
+
+### Required cases
+
+1. Stop/start cycle at least 3 times on the same D2s VM.
+2. `GET /deployments/{id}/live` reflects current power state after each action.
+3. Re-run setup endpoint `POST /deployments/{id}/setup` after VM restart.
+4. Validate endpoint `POST /deployments/{id}/validate` after each cycle.
+5. Destroy endpoint deletes RG and transitions to terminal state.
+
+### Failure injection cases (recommended)
+
+1. Invalid credentials -> provisioning fails early with useful error.
+2. Invalid region or unavailable SKU -> failure includes Azure message.
+3. Invalid model name (bad characters) -> model skipped safely, setup does not crash.
+4. WebUI port conflict (pre-bind port) -> setup reports Open WebUI failure detail.
+5. SSH key missing -> setup/validate fail with explicit key-path error.
+
+---
+
+## Phase 7 - Auto-Shutdown and Cost Controls
+
+Purpose: ensure cost safety controls actually work.
+
+### Tests
+
+1. Set auto-shutdown via API:
 
 ```bash
-# ─── CI pipeline (free, runs in under 2 seconds) ───────────────────
-pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v
+curl -s -X POST http://localhost:8000/api/v1/deployments/<ID>/auto-shutdown \
+  -H "Content-Type: application/json" \
+  -d '{"time_utc":"1800"}' | jq .
+```
 
-# ─── Individual phases ──────────────────────────────────────────────
+2. Confirm schedule exists in Azure (`Microsoft.DevTestLab/schedules`).
+3. Update schedule time and verify change.
+4. Destroy deployment and verify schedule is removed with RG deletion.
 
-# Phase 1 — static analysis (free)
-pytest tests/test_lint.py -m phase1 -v
+---
 
-# Phase 2 — config logic + API shapes (free)
-pytest tests/test_dry_run.py tests/test_api.py -m phase2 -v
+## Phase 8 - Exit Gates Before Any H100 Testing
 
-# Phase 3 — cheap VM integration (~$0.10/hr, requires Azure creds)
-AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
+Do not start H100 tests until all gates below pass.
 
-# Phase 4 — remote validation (free, requires running VM)
-AZURE_TEST_VM_IP=<IP> pytest tests/test_validate_remote.py -m phase4 -v -s
+### Reliability gates on D2s_v5
 
-# ─── Cleanup ────────────────────────────────────────────────────────
+1. At least 5 full end-to-end runs pass in a row.
+2. At least 2 regions tested successfully (for SKU/region variance).
+3. Setup success rate >= 95% across reruns.
+4. No orphaned resource groups after teardown.
+5. Ollama remote API verified in every run.
+6. Open WebUI path verified in at least 3 runs.
+7. Stop/start/setup/validate cycle verified after reboot.
 
-# Teardown test resources
+### Evidence to store per run
+
+- Deployment ID
+- Region, VM size, and config payload (sanitized)
+- Provision/setup step timelines
+- Validation output
+- Endpoint checks (Ollama/Open WebUI)
+- Final teardown confirmation
+
+---
+
+## 9) Minimal H100 Test Plan (After Gates)
+
+Once D2s_v5 gates pass, run a constrained H100 suite:
+
+1. One confidential provisioning run.
+2. One setup run with GPU checks enabled.
+3. Validate `nvidia-smi` and GPU model detection.
+4. Run at least one inference on target large model.
+5. Verify lifecycle actions still work.
+6. Destroy immediately.
+
+Keep H100 runtime short and purpose-driven.
+
+---
+
+## 10) Extended Automated Test Files (Implemented)
+
+These files are now part of the recommended pre-H100 test suite.
+
+### Implemented files
+
+1. `tests/test_phase3_sdk_assertions.py`
+   - assert NSG rule payloads, NIC settings, tags, disk properties
+2. `tests/test_phase3_setup_ollama_webui.py`
+   - deploy D2s via provider flow, run setup, assert Ollama + Open WebUI health
+3. `tests/test_phase3_network_restrictions.py`
+   - CIDR restriction behavior and port accessibility checks
+4. `tests/test_phase3_recovery_paths.py`
+   - rerun setup, stop/start loops, post-reboot validation
+5. `tests/test_phase3_negative_inputs.py`
+   - invalid creds/region/model tags and error contract assertions
+
+Shared helper file:
+
+- `tests/live_test_utils.py`
+
+---
+
+## 11) Teardown and Cleanup
+
+Always run cleanup after live tests:
+
+```bash
 AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
-
-# Teardown ALL resources (test + production)
-AZURE_TEST_LIVE=true AZURE_NUKE_PROD=true pytest tests/test_teardown.py -v -s
 ```
 
----
-
-## Test File Reference
-
-| File | Phase | Tests | Cost | What it covers |
-|------|-------|-------|------|----------------|
-| `tests/test_lint.py` | 1 | 66 | $0 | Imports, code quality, secrets scan, file existence |
-| `tests/test_dry_run.py` | 2 | 28 | $0 | Config translation, image parsing, model defaults, provider metadata |
-| `tests/test_api.py` | 2 | 16 | $0 | HTTP endpoints, 404 handling, OpenAPI schema |
-| `tests/test_cheap_vm.py` | 3 | 6 | ~$0.10/hr | Real Azure deploy, status, SSH, validate, lifecycle, teardown |
-| `tests/test_validate_remote.py` | 4 | 7 | $0 | SSH checks, OS info, disk, GPU, Ollama service/API |
-| `tests/test_teardown.py` | — | 3 | $0 | Resource group deletion, state file cleanup |
-| `tests/conftest.py` | — | — | — | Shared fixtures: `production_config`, `test_config`, `mock_azure_credentials` |
-
----
-
-## Troubleshooting
-
-### Phase 3 tests are all skipped
-
-Set `AZURE_TEST_LIVE=true`. Live tests are opt-in to prevent accidental
-charges.
-
-### "No H100 quota in eastus"
-
-Request a quota increase at the
-[Azure Quota portal](https://portal.azure.com/#blade/Microsoft_Azure_Capacity/QuotaMenuBlade).
-Phase 3 tests use `Standard_D2s_v5` which needs no GPU quota.
-
-### SSH connection timeout in Phase 3/4
-
-1. Verify VM is running: check `test_02_vm_status` output
-2. Verify SSH key exists: `ls ~/.ssh/id_ed25519`
-3. Check NSG rules: the provisioner creates AllowSSH on port 22
-4. If the VM was just created, wait 30-60 seconds for sshd to start
-
-### "SkuNotAvailable" during Phase 3 deploy
-
-The VM size is not available in the chosen region. The test defaults to
-`eastus`. Override by modifying `_get_test_config()` in the test file, or
-set `AZURE_LOCATION` in your environment.
-
-### Pydantic validation error on DeploymentConfig
-
-Check for stale environment variables. The config model validates field
-formats (e.g. `vm_name` must match `^[a-zA-Z0-9][a-zA-Z0-9\-]{0,62}$`).
-
-### Phase 3 failed partway through — resources still running
-
-Run the teardown test to clean up:
+If a run fails mid-way:
 
 ```bash
 AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -k teardown -v -s
 ```
 
-Or use the standalone teardown utility:
+Post-cleanup checks:
 
-```bash
-AZURE_TEST_LIVE=true pytest tests/test_teardown.py -k "test_rg" -v -s
-```
+1. Resource group no longer exists.
+2. Local test state files are removed.
+3. No running VM from the test remains billable.
 
-### TestClient import error in test_api.py
+---
 
-Install `httpx`, which is required by FastAPI's `TestClient`:
+## 12) Troubleshooting Shortlist
 
-```bash
-pip install httpx
-```
+### Live tests skipped
+
+- Ensure `AZURE_TEST_LIVE=true` is set.
+
+### Provisioning fails with SKU/region errors
+
+- Switch region or confirm SKU availability for `Standard_D2s_v5`.
+
+### SSH times out
+
+- Confirm NSG allows port 22 from your source.
+- Wait for cloud-init/sshd to finish bootstrapping.
+- Verify `~/.ssh/id_ed25519` exists.
+
+### Ollama local works but remote fails
+
+- Check `OLLAMA_HOST=0.0.0.0:11434` in systemd environment.
+- Check NSG rule for port `11434` and source CIDR.
+
+### Open WebUI container exists but endpoint fails
+
+- Check container status/logs.
+- Confirm host port mapping matches `open_webui_port`.
+- Confirm NSG allows that port.
+
+---
+
+## 13) Recommended Daily Flow for Backend Engineers
+
+1. Run Phase 1-2 locally before pushing.
+2. Run one D2s live test loop for infrastructure confidence.
+3. Run one D2s setup/network loop for Ollama/Open WebUI confidence.
+4. Run teardown and verify no cloud leftovers.
+5. Reserve H100 runs for milestone validations only.
+
+This flow gives high confidence in Azure SDK + provisioning behavior while keeping cost and risk low.
