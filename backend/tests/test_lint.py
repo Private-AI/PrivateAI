@@ -43,7 +43,37 @@ SOURCE_MODULES = [
 SOURCE_FILES = list(APP_DIR.rglob("*.py"))
 
 
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except ModuleNotFoundError:
+        return False
+
+
+REQUIRED_IMPORT_DEPS = ["fastapi", "azure.identity"]
+MISSING_IMPORT_DEPS = [dep for dep in REQUIRED_IMPORT_DEPS if not _module_available(dep)]
+
+
 @pytest.mark.phase1
+class TestEnvironmentPreflight:
+    """Ensure runtime deps are installed before import-heavy checks run."""
+
+    def test_required_runtime_dependencies_installed(self) -> None:
+        assert not MISSING_IMPORT_DEPS, (
+            "Missing runtime dependency(s): "
+            f"{', '.join(MISSING_IMPORT_DEPS)}. "
+            "Run: pip install -r requirements.txt"
+        )
+
+
+@pytest.mark.phase1
+@pytest.mark.skipif(
+    bool(MISSING_IMPORT_DEPS),
+    reason=(
+        "Skipping import checks because runtime dependencies are missing: "
+        + ", ".join(MISSING_IMPORT_DEPS)
+    ),
+)
 class TestImports:
     """Verify all modules can be imported without errors."""
 

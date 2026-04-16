@@ -33,29 +33,33 @@ def setup_ready_d2s() -> dict[str, object]:
     )
 
     loop = get_event_loop()
-    provision_result = loop.run_until_complete(provider.provision(config, credentials))
-    assert provision_result.success, f"Provisioning failed: {provision_result.error}"
-    assert provision_result.public_ip, "No public IP assigned"
+    should_cleanup = False
+    try:
+        provision_result = loop.run_until_complete(provider.provision(config, credentials))
+        assert provision_result.success, f"Provisioning failed: {provision_result.error}"
+        assert provision_result.public_ip, "No public IP assigned"
+        should_cleanup = True
 
-    setup_result = loop.run_until_complete(
-        provider.setup_vm(
-            config,
-            credentials,
-            provision_result.public_ip,
-            "~/.ssh/id_ed25519",
+        setup_result = loop.run_until_complete(
+            provider.setup_vm(
+                config,
+                credentials,
+                provision_result.public_ip,
+                "~/.ssh/id_ed25519",
+            )
         )
-    )
-    assert setup_result.success, f"VM setup failed: {setup_result.error}"
+        assert setup_result.success, f"VM setup failed: {setup_result.error}"
 
-    yield {
-        "provider": provider,
-        "credentials": credentials,
-        "config": config,
-        "public_ip": provision_result.public_ip,
-        "setup_result": setup_result,
-    }
-
-    loop.run_until_complete(provider.destroy(config, credentials))
+        yield {
+            "provider": provider,
+            "credentials": credentials,
+            "config": config,
+            "public_ip": provision_result.public_ip,
+            "setup_result": setup_result,
+        }
+    finally:
+        if should_cleanup:
+            loop.run_until_complete(provider.destroy(config, credentials))
 
 
 class TestSetupOllamaAndOpenWebUI:

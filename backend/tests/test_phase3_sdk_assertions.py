@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 
 from app.providers.azure.provider import AzureProvider
 from tests.live_test_utils import (
     build_d2s_config,
     get_azure_clients,
+    get_event_loop,
     get_live_credentials,
     live_enabled,
 )
@@ -26,19 +25,23 @@ def deployed_d2s() -> dict[str, object]:
     credentials = get_live_credentials()
     config = build_d2s_config(name_prefix="privateai-sdk", deploy_open_webui=False)
 
-    loop = asyncio.get_event_loop()
-    provision_result = loop.run_until_complete(provider.provision(config, credentials))
-    assert provision_result.success, f"Provisioning failed: {provision_result.error}"
-    assert provision_result.public_ip, "Provisioning completed without public IP"
+    loop = get_event_loop()
+    should_cleanup = False
+    try:
+        provision_result = loop.run_until_complete(provider.provision(config, credentials))
+        assert provision_result.success, f"Provisioning failed: {provision_result.error}"
+        assert provision_result.public_ip, "Provisioning completed without public IP"
+        should_cleanup = True
 
-    yield {
-        "provider": provider,
-        "credentials": credentials,
-        "config": config,
-        "public_ip": provision_result.public_ip,
-    }
-
-    loop.run_until_complete(provider.destroy(config, credentials))
+        yield {
+            "provider": provider,
+            "credentials": credentials,
+            "config": config,
+            "public_ip": provision_result.public_ip,
+        }
+    finally:
+        if should_cleanup:
+            loop.run_until_complete(provider.destroy(config, credentials))
 
 
 class TestAzureSDKAssertions:

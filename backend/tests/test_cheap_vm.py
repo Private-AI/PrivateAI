@@ -1,6 +1,6 @@
 """Phase 3: Cheap VM integration test — deploys a real D2s_v5 VM.
 
-Cost: ~$0.10/hour. Creates real Azure resources.
+Cost: low, but creates real Azure resources.
 MUST be torn down after testing.
 
 Run: AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
@@ -13,7 +13,6 @@ NOTE: Tests are numbered (test_01_, test_02_, ...) and must run in order.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import time
@@ -21,16 +20,25 @@ from pathlib import Path
 
 import pytest
 
-from app.models.credentials import AzureCredentials
-from app.models.deployment import (
-    CloudProvider,
-    DeploymentConfig,
-    SecurityLevel,
-    SetupConfig,
-)
 from app.providers.azure.provider import AzureProvider
+from tests.live_test_utils import (
+    build_d2s_config,
+    get_event_loop,
+    get_live_credentials,
+)
 
-STATE_FILE = Path("/tmp/privateai-test-state.json")
+STATE_FILE = Path(
+    os.environ.get(
+        "PRIVATEAI_TEST_STATE_FILE",
+        f"/tmp/privateai-test-state-{os.getpid()}-{int(time.time())}.json",
+    )
+)
+
+TEST_CONFIG = build_d2s_config(
+    name_prefix="privateai-cheap",
+    deploy_open_webui=False,
+    models=["gemma3:4b"],
+)
 
 # Skip all tests if AZURE_TEST_LIVE is not set
 pytestmark = [
@@ -42,29 +50,8 @@ pytestmark = [
 ]
 
 
-def _get_live_credentials() -> AzureCredentials:
-    """Build credentials from environment variables for live tests."""
-    return AzureCredentials(
-        subscription_id=os.environ["AZURE_SUBSCRIPTION_ID"],
-        tenant_id=os.environ["AZURE_TENANT_ID"],
-        client_id=os.environ["AZURE_CLIENT_ID"],
-        client_secret=os.environ["AZURE_CLIENT_SECRET"],
-    )
-
-
-def _get_test_config() -> DeploymentConfig:
-    return DeploymentConfig(
-        provider=CloudProvider.AZURE,
-        region="eastus",
-        vm_name="trustgpt-test-vm",
-        resource_group="trustgpt-test-rg",
-        vm_size="Standard_D2s_v5",
-        gpu_enabled=False,
-        security_level=SecurityLevel.STANDARD,
-        os_disk_size_gb=64,
-        data_disk_size_gb=32,
-        setup=SetupConfig(models=["gemma3:4b"], deploy_open_webui=False),
-    )
+def _get_test_config():
+    return TEST_CONFIG
 
 
 def _save_state(data: dict) -> None:  # type: ignore[type-arg]
@@ -84,11 +71,9 @@ class TestCheapVMDeploy:
         """Deploy the cheap test VM."""
         provider = AzureProvider()
         config = _get_test_config()
-        credentials = _get_live_credentials()
+        credentials = get_live_credentials()
 
-        result = asyncio.get_event_loop().run_until_complete(
-            provider.provision(config, credentials)
-        )
+        result = get_event_loop().run_until_complete(provider.provision(config, credentials))
 
         assert result.success, f"Deploy failed: {result.error}"
         assert result.public_ip, "No public IP assigned"
@@ -99,6 +84,7 @@ class TestCheapVMDeploy:
                 "vm_name": config.vm_name,
                 "public_ip": result.public_ip,
                 "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                "state_file": str(STATE_FILE),
             }
         )
 
@@ -110,15 +96,11 @@ class TestCheapVMDeploy:
 
         provider = AzureProvider()
         config = _get_test_config()
-        credentials = _get_live_credentials()
+        credentials = get_live_credentials()
 
-        status = asyncio.get_event_loop().run_until_complete(
-            provider.get_vm_status(config, credentials)
-        )
+        status = get_event_loop().run_until_complete(provider.get_vm_status(config, credentials))
 
-        assert "running" in status.power_state.lower(), (
-            f"VM state: {status.power_state}"
-        )
+        assert "running" in status.power_state.lower(), f"VM state: {status.power_state}"
         assert status.resource_count >= 5
 
     def test_03_ssh_connectivity(self) -> None:
@@ -171,9 +153,9 @@ class TestCheapVMDeploy:
 
         provider = AzureProvider()
         config = _get_test_config()
-        credentials = _get_live_credentials()
+        credentials = get_live_credentials()
 
-        result = asyncio.get_event_loop().run_until_complete(
+        result = get_event_loop().run_until_complete(
             provider.validate(
                 config,
                 credentials,
@@ -183,9 +165,7 @@ class TestCheapVMDeploy:
             )
         )
 
-        ssh_check = next(
-            (c for c in result.checks if c.name == "SSH connectivity"), None
-        )
+        ssh_check = next((c for c in result.checks if c.name == "SSH connectivity"), None)
         assert ssh_check is not None and ssh_check.passed, "SSH check failed"
 
     def test_05_stop_and_start(self) -> None:
@@ -196,37 +176,30 @@ class TestCheapVMDeploy:
 
         provider = AzureProvider()
         config = _get_test_config()
-        credentials = _get_live_credentials()
-        loop = asyncio.get_event_loop()
+        credentials = get_live_credentials()
+        loop = get_event_loop()
 
         # Stop
         loop.run_until_complete(provider.stop_vm(config, credentials))
         status = loop.run_until_complete(provider.get_vm_status(config, credentials))
-        assert "deallocated" in status.power_state.lower(), (
-            f"After stop: {status.power_state}"
-        )
+        assert "deallocated" in status.power_state.lower(), f"After stop: {status.power_state}"
 
         # Start
         ip = loop.run_until_complete(provider.start_vm(config, credentials))
         assert ip, "No IP after restart"
         status = loop.run_until_complete(provider.get_vm_status(config, credentials))
-        assert "running" in status.power_state.lower(), (
-            f"After start: {status.power_state}"
-        )
+        assert "running" in status.power_state.lower(), f"After start: {status.power_state}"
+
+        state["public_ip"] = ip
+        _save_state(state)
 
     def test_99_teardown(self) -> None:
         """Tear down all test resources. Run this last."""
-        state = _load_state()
-        if not state:
-            pytest.skip("No state file — nothing to tear down")
-
         provider = AzureProvider()
         config = _get_test_config()
-        credentials = _get_live_credentials()
+        credentials = get_live_credentials()
 
-        deleted = asyncio.get_event_loop().run_until_complete(
-            provider.destroy(config, credentials)
-        )
+        deleted = get_event_loop().run_until_complete(provider.destroy(config, credentials))
         assert deleted, "Teardown returned False"
 
         STATE_FILE.unlink(missing_ok=True)
