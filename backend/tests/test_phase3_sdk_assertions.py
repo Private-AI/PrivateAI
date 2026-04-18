@@ -23,7 +23,7 @@ pytestmark = [
 def deployed_d2s() -> dict[str, object]:
     provider = AzureProvider()
     credentials = get_live_credentials()
-    config = build_d2s_config(name_prefix="privateai-sdk", deploy_open_webui=False)
+    config = build_d2s_config(name_prefix="privateai-sdk")
 
     loop = get_event_loop()
     should_cleanup = False

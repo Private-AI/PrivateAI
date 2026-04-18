@@ -1,4 +1,9 @@
-"""Extended Phase 3: Network exposure and source restriction checks."""
+"""Extended Phase 3: Network exposure and source restriction checks.
+
+The cheap-VPS pipeline only opens ports 22 (SSH) and 11434 (Ollama).
+Open WebUI is *not* installed on the cloud VM — it runs locally with
+the backend — so there is no port 3000 rule or endpoint to test here.
+"""
 
 from __future__ import annotations
 
@@ -86,8 +91,6 @@ def restricted_deployment() -> dict[str, object]:
     credentials = get_live_credentials()
     config = build_d2s_config(
         name_prefix="privateai-net",
-        deploy_open_webui=True,
-        open_webui_port=3000,
         allowed_ssh_sources=[cidr],
         allowed_api_sources=[cidr],
     )
@@ -152,9 +155,11 @@ class TestNetworkRestrictions:
             if rule.source_address_prefixes:
                 sources.update(str(prefix) for prefix in rule.source_address_prefixes)
 
+        # Both required ports must be restricted to the runner CIDR.
         assert cidr in sources_by_port.get("22", set())
         assert cidr in sources_by_port.get("11434", set())
-        assert cidr in sources_by_port.get("3000", set())
+        # Port 3000 must NOT be opened — Open WebUI is local-only.
+        assert "3000" not in sources_by_port
 
     def test_core_ports_reachable_from_allowed_source(
         self,
@@ -163,10 +168,10 @@ class TestNetworkRestrictions:
         ip = restricted_deployment["public_ip"]
         assert ip
 
-        for port in (22, 11434, 3000):
+        for port in (22, 11434):
             _wait_for_tcp(str(ip), port)
 
-    def test_ollama_and_webui_http_endpoints_reachable(
+    def test_ollama_http_endpoint_reachable(
         self,
         restricted_deployment: dict[str, object],
     ) -> None:
@@ -174,4 +179,3 @@ class TestNetworkRestrictions:
         assert ip
 
         _wait_for_http(f"http://{ip}:11434/api/tags")
-        _wait_for_http(f"http://{ip}:3000")

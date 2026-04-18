@@ -1,19 +1,28 @@
 # Cheap VPS (Azure D2s_v5) Testing Procedure — Copy/Paste Edition
 
-This document is a focused, low-effort test runbook for the **cheap VPS phase** only.
+This document is a focused, low-effort test runbook for the **cheap VPS
+phase** only.
 
-Goal: set Azure credentials once, run pre-written commands in order, and quickly decide pass/fail.
+Goal: set Azure credentials once, run pre-written commands in order, and
+quickly decide pass/fail.
 
 Scope: `Standard_D2s_v5` only (no H100 here).
+
+> **Architecture note:** the cloud VM only runs Ollama. Open WebUI runs
+> locally alongside the FastAPI backend as a managed subprocess — it is
+> never installed on the provisioned VM. The cheap-VPS tests therefore
+> only validate the Azure infrastructure and the remote Ollama surface
+> (ports 22 + 11434). Anything that mentioned Open WebUI on the VM in
+> earlier versions of this runbook has been removed.
 
 ---
 
 ## 1) One-time terminal setup (per shell)
 
-From repository root:
+From the repository root:
 
 ```bash
-cd /home/kalaa/PrivateAI/backend
+cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
@@ -102,18 +111,22 @@ Pass criteria:
 - `test_99_teardown` passes (or at minimum no teardown failure).
 - No `FAILED`/`ERROR` in summary.
 
-### 4.3 Setup + Ollama + Open WebUI deep validation (critical)
+### 4.3 Setup + Ollama deep validation (critical)
 
 ```bash
-AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s | tee /tmp/privateai-phase3-02-setup-webui.log
+AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s | tee /tmp/privateai-phase3-02-setup-ollama.log
 ```
 
 Pass criteria:
 - All tests in this file pass.
 - Specifically confirms:
-  - setup steps complete (`connect`, `install_ollama`, `install_open_webui`)
-  - validator checks pass (`SSH connectivity`, `Ollama service`, `Ollama API`, `Open WebUI container`)
-  - remote HTTP checks succeed (`:11434` and `:3000`).
+  - Setup steps complete in order (`connect`, `update_system`,
+    `mount_disk`, `nvidia_driver` (no-op on D2s_v5), `install_ollama`,
+    `pull_models`).
+  - Validator checks pass (`SSH connectivity`, `Ollama service`,
+    `Ollama API (local)`, `Ollama API (remote)`, `Ollama bound to 0.0.0.0`,
+    `Ollama model dir`).
+  - Remote HTTP check succeeds on port `11434`.
 
 ### 4.4 Always run teardown at end
 
@@ -122,8 +135,8 @@ AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s | tee /tmp/privateai-ph
 ```
 
 Pass criteria:
-- teardown test completes without failure.
-- local state files cleaned.
+- Teardown test completes without failure.
+- Local state files cleaned.
 
 ---
 
@@ -147,7 +160,7 @@ After any test run, use these to quickly classify result:
 
 ```bash
 # Replace <LOGFILE> with one from /tmp above
-grep -E "FAILED|ERROR|Traceback" <LOGFILE> && echo "❌ FAIL" || echo "✅ NO FAIL PATTERNS FOUND"
+grep -E "FAILED|ERROR|Traceback" <LOGFILE> && echo "FAIL" || echo "NO FAIL PATTERNS FOUND"
 ```
 
 ```bash
@@ -173,12 +186,12 @@ export AZURE_TEST_LIVE=true
 
 ### B) SSH failures/timeouts
 Likely causes:
-- missing `~/.ssh/id_ed25519`
+- Missing `~/.ssh/id_ed25519`
 - NSG reachability delay right after provisioning
 
 Fix:
-- ensure key exists (Section 3)
-- rerun the specific failing test file once after 1-2 minutes
+- Ensure key exists (Section 3)
+- Rerun the specific failing test file once after 1-2 minutes
 
 ### C) Region/SKU provisioning errors
 Cause: temporary Azure capacity/availability issue.
@@ -206,22 +219,28 @@ AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
 If you only have a few minutes, run exactly this:
 
 ```bash
-cd /home/kalaa/PrivateAI/backend
+cd backend
 source .venv/bin/activate
 
 pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v
 AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
-AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s
+AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s
 AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
 ```
 
-If all 4 commands pass, you have strong cheap-VPS confidence with minimal effort.
+If all 4 commands pass, you have strong cheap-VPS confidence with minimal
+effort.
+
+Alternatively, the `scripts/run_phase3_fast.sh` helper script runs the
+same sequence with logs collected in `/tmp/privateai-phase3-logs-<ts>/`
+and an automatic teardown trap.
 
 ---
 
 ## 9) Exit gate before H100
 
 Do **not** move to H100 unless:
+
 1. The 4-command daily routine above passes.
 2. No teardown failures.
 3. No orphaned test VM/resource group remains.

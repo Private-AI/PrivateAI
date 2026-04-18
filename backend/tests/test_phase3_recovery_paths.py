@@ -24,7 +24,6 @@ def lifecycle_ready_deployment() -> dict[str, object]:
     credentials = get_live_credentials()
     config = build_d2s_config(
         name_prefix="privateai-recovery",
-        deploy_open_webui=False,
         models=["gemma3:4b"],
     )
 

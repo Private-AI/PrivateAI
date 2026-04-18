@@ -36,7 +36,6 @@ STATE_FILE = Path(
 
 TEST_CONFIG = build_d2s_config(
     name_prefix="privateai-cheap",
-    deploy_open_webui=False,
     models=["gemma3:4b"],
 )
 

@@ -145,7 +145,7 @@ class OpenWebuiManager:
                 self._started_at = time.time()
 
             # Start log reader in background
-            asyncio.get_event_loop().run_in_executor(
+            asyncio.get_running_loop().run_in_executor(
                 None,
                 self._read_output,
                 proc,

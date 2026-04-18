@@ -4,8 +4,15 @@ This guide is the canonical test plan for validating the backend with strong emp
 
 - Azure SDK provisioning correctness
 - Provisioning/setup script behavior (`provider.py`, `vm_setup.py`, `validator.py`)
-- Networking and service reachability (SSH, Ollama, Open WebUI)
+- Networking and service reachability (SSH, Ollama)
 - Cost-safe progression from `Standard_D2s_v5` to H100
+
+> **Architecture note:** Open WebUI runs locally alongside the backend
+> as a managed subprocess, not on the cloud VM. All VM-side tests
+> therefore only verify SSH, disk mount, NVIDIA driver (where
+> applicable), Ollama service, and the Ollama remote API. There is no
+> Open WebUI container, no port 3000 NSG rule, and no WebUI HTTP check
+> performed against the VM.
 
 The strategy is intentionally staged so you can prove reliability on cheap infrastructure before spending on GPU VMs.
 
@@ -17,7 +24,7 @@ By the time you finish this plan, you should be confident that:
 
 1. Azure resources are created correctly and consistently through the SDK.
 2. VM setup scripts are robust (idempotent enough, retry-safe, clear failures).
-3. Ollama and Open WebUI are configured correctly and reachable from expected networks.
+3. Ollama is configured correctly and reachable from expected networks.
 4. Lifecycle actions (`start`, `stop`, `destroy`, `auto-shutdown`) behave correctly.
 5. H100 testing is only started after objective D2s_v5 gates are met.
 
@@ -95,8 +102,8 @@ AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
 # Extended Phase 3 live suite (Azure SDK + setup + network + recovery + negative)
 AZURE_TEST_LIVE=true pytest tests/test_phase3_*.py -m phase3 -v -s
 
-# Run only the Ollama/Open WebUI setup validation
-AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s
+# Run only the Ollama setup validation
+AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s
 
 # Phase 4 remote validation (existing baseline)
 AZURE_TEST_VM_IP=<PUBLIC_IP> pytest tests/test_validate_remote.py -m phase4 -v -s
@@ -114,7 +121,7 @@ Use this order to maximize signal while minimizing spend.
 | 1 | `pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v` | Free preflight correctness | 1-2 min | $0 |
 | 2 | `AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s` | Baseline end-to-end infra + lifecycle | 8-15 min | Low |
 | 3 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_sdk_assertions.py -m phase3 -v -s` | Azure SDK resource correctness (NSG/NIC/tags/disks) | 8-15 min | Low |
-| 4 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s` | Provisioning scripts + Ollama/Open WebUI setup validation | 12-25 min | Low-Medium |
+| 4 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s` | Provisioning scripts + remote Ollama setup validation | 12-25 min | Low-Medium |
 | 5 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_network_restrictions.py -m phase3 -v -s` | CIDR restrictions and endpoint reachability | 10-20 min | Low-Medium |
 | 6 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_recovery_paths.py -m phase3 -v -s` | Stop/start loops and setup/validate recovery | 12-22 min | Medium |
 | 7 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_negative_inputs.py -m phase3 -v -s` | Error handling and input hardening | 10-20 min | Low-Medium |
@@ -135,7 +142,7 @@ Use this table to decide if you can proceed to the next step.
 | 1 | All tests pass, no import/schema failures | Any failed test in lint/dry-run/API |
 | 2 | Provision succeeds, SSH check passes, stop/start passes, teardown succeeds | Provision failure, lifecycle mismatch, teardown failure |
 | 3 | RG/NSG/NIC/PIP/VM/disk assertions all pass | Tag mismatch, missing ports/rules, VM/disk mismatch |
-| 4 | Setup result success, validator confirms Ollama + Open WebUI checks, remote HTTP reachable | Setup failure, Ollama service/API failure, WebUI container or HTTP failure |
+| 4 | Setup result success, validator confirms Ollama checks, remote HTTP reachable on :11434 | Setup failure, Ollama service/API failure |
 | 5 | NSG source prefixes match expected CIDR and allowed-source connectivity checks pass | Source prefix mismatch, expected ports unreachable from allowed source |
 | 6 | 3 stop/start cycles pass, setup rerun succeeds, post-recovery validate passes | Any cycle fails, setup rerun fails, validation regresses |
 | 7 | Negative tests fail safely with expected error behavior, no crash/no orphaned resources | Unhandled exception, ambiguous errors, leaked resources |
@@ -276,9 +283,9 @@ These checks are covered by the extended Phase 3 files:
 1. **Resource tagging**
    - All major resources contain expected tags (`project`, `created-by`).
 2. **NSG rules correctness**
-   - Inbound `22` exists.
-   - Inbound `11434` exists.
-   - Open WebUI port rule exists only when requested.
+   - Inbound `22` exists (SSH).
+   - Inbound `11434` exists (Ollama).
+   - No port 3000 rule (Open WebUI is local-only).
 3. **Network placement**
    - NIC is attached to expected subnet.
    - Public IP is static Standard SKU.
@@ -298,13 +305,14 @@ This phase is mandatory before any H100 validation.
 
 Primary automated coverage:
 
-- `tests/test_phase3_setup_ollama_webui.py`
+- `tests/test_phase3_setup_ollama.py`
 - `tests/test_phase3_recovery_paths.py`
 - `tests/test_phase3_negative_inputs.py`
 
 ### Deployment payload (D2s_v5 with setup enabled)
 
-Use API-driven deployment (not just provider direct calls) to include orchestrator and WebSocket flow.
+Use API-driven deployment (not just provider direct calls) to include
+orchestrator and WebSocket flow.
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/deployments \
@@ -325,9 +333,7 @@ curl -s -X POST http://localhost:8000/api/v1/deployments \
       "vm_size": "Standard_D2s_v5",
       "security_level": "standard",
       "setup": {
-        "models": ["gemma3:4b"],
-        "deploy_open_webui": true,
-        "open_webui_port": 3000
+        "models": ["gemma3:4b"]
       }
     }
   }' | jq .
@@ -344,19 +350,21 @@ For the resulting VM IP:
    - `OLLAMA_HOST=0.0.0.0:11434`
    - `OLLAMA_MODELS=/models/ollama`
 5. Model pull result includes requested model(s).
-6. Open WebUI container is running when requested.
 
 ### Expected D2s_v5 behavior for NVIDIA step
 
 - D2s_v5 has no GPU.
 - Setup should not hard-fail solely because GPU is absent.
-- If driver step is skipped, remaining steps (Ollama/Open WebUI) should still complete.
+- If driver step is skipped, remaining steps (Ollama, models) should
+  still complete. The `nvidia_driver` step is expected to report
+  `completed` with a `skipped (no GPU detected)` detail.
 
 ---
 
-## Phase 5 - Networking Validation (Ollama + Open WebUI)
+## Phase 5 - Networking Validation (Ollama)
 
-Purpose: ensure real network exposure and access control work as intended.
+Purpose: ensure real network exposure and access control work as
+intended for the two ports the VM exposes (22, 11434).
 
 ### A) Ollama local and remote checks
 
@@ -378,30 +386,16 @@ curl -s http://<VM_IP>:11434/api/generate \
 
 Expected:
 
-- local endpoint responds
-- remote endpoint responds (if NSG allows source)
-- generate returns non-empty response
+- Local endpoint responds.
+- Remote endpoint responds (if NSG allows source).
+- Generate returns a non-empty response.
 
-### B) Open WebUI checks
+### B) Open WebUI (local process on the backend host)
 
-From VM (SSH):
-
-```bash
-sudo docker inspect --format='{{.State.Status}}' open-webui
-curl -sf http://localhost:3000 >/dev/null
-```
-
-From test runner host:
-
-```bash
-curl -I http://<VM_IP>:3000
-```
-
-Expected:
-
-- container state is `running`
-- HTTP reachable on configured port
-- if custom port is used, only that port should be open (plus required ports)
+Open WebUI is managed by the backend as a subprocess on
+`http://localhost:8080` — it is **not** deployed on the cloud VM and
+there is no NSG rule for it. Its health/state is validated separately
+via the `/api/v1/open-webui/*` endpoints, not in the cheap-VPS phase.
 
 ### C) NSG source filtering checks
 
@@ -412,8 +406,9 @@ Run at least two scenarios:
 
 Verify behavior:
 
-- Allowed source can access `22`, `11434`, and WebUI port.
-- Non-allowed source cannot access restricted ports.
+- Allowed source can access `22` and `11434`.
+- Non-allowed source cannot access `22` or `11434`.
+- Port `3000` must NOT be opened by the provisioner under any scenario.
 
 ---
 
@@ -434,8 +429,7 @@ Purpose: validate operational reliability over repeated runs.
 1. Invalid credentials -> provisioning fails early with useful error.
 2. Invalid region or unavailable SKU -> failure includes Azure message.
 3. Invalid model name (bad characters) -> model skipped safely, setup does not crash.
-4. WebUI port conflict (pre-bind port) -> setup reports Open WebUI failure detail.
-5. SSH key missing -> setup/validate fail with explicit key-path error.
+4. SSH key missing -> setup/validate fail with explicit key-path error.
 
 ---
 
@@ -470,8 +464,7 @@ Do not start H100 tests until all gates below pass.
 3. Setup success rate >= 95% across reruns.
 4. No orphaned resource groups after teardown.
 5. Ollama remote API verified in every run.
-6. Open WebUI path verified in at least 3 runs.
-7. Stop/start/setup/validate cycle verified after reboot.
+6. Stop/start/setup/validate cycle verified after reboot.
 
 ### Evidence to store per run
 
@@ -479,7 +472,7 @@ Do not start H100 tests until all gates below pass.
 - Region, VM size, and config payload (sanitized)
 - Provision/setup step timelines
 - Validation output
-- Endpoint checks (Ollama/Open WebUI)
+- Endpoint checks (Ollama remote API)
 - Final teardown confirmation
 
 ---
@@ -506,11 +499,14 @@ These files are now part of the recommended pre-H100 test suite.
 ### Implemented files
 
 1. `tests/test_phase3_sdk_assertions.py`
-   - assert NSG rule payloads, NIC settings, tags, disk properties
-2. `tests/test_phase3_setup_ollama_webui.py`
-   - deploy D2s via provider flow, run setup, assert Ollama + Open WebUI health
+   - assert NSG rule payloads (22 + 11434 only), NIC settings, tags,
+     disk properties
+2. `tests/test_phase3_setup_ollama.py`
+   - deploy D2s via provider flow, run setup, assert Ollama health
+     (service, env vars, local + remote API)
 3. `tests/test_phase3_network_restrictions.py`
-   - CIDR restriction behavior and port accessibility checks
+   - CIDR restriction behavior for ports 22 + 11434 and absence of
+     port 3000
 4. `tests/test_phase3_recovery_paths.py`
    - rerun setup, stop/start loops, post-reboot validation
 5. `tests/test_phase3_negative_inputs.py`
@@ -565,11 +561,19 @@ Post-cleanup checks:
 - Check `OLLAMA_HOST=0.0.0.0:11434` in systemd environment.
 - Check NSG rule for port `11434` and source CIDR.
 
-### Open WebUI container exists but endpoint fails
+### Open WebUI does not start / shows login screen
 
-- Check container status/logs.
-- Confirm host port mapping matches `open_webui_port`.
-- Confirm NSG allows that port.
+Open WebUI runs locally on the backend host, not on the cloud VM.
+Use these endpoints to diagnose it:
+
+- `GET /api/v1/open-webui/status` - current state and any error
+- `GET /api/v1/open-webui/health` - simple liveness check
+- `POST /api/v1/open-webui/restart` - recycle the subprocess
+
+If it shows a login screen, confirm `WEBUI_AUTH=False` is being passed
+(the manager sets this by default) and delete
+`open-webui-data/webui.db` if the DB was created under an old
+auth-enabled configuration.
 
 ---
 
@@ -577,7 +581,7 @@ Post-cleanup checks:
 
 1. Run Phase 1-2 locally before pushing.
 2. Run one D2s live test loop for infrastructure confidence.
-3. Run one D2s setup/network loop for Ollama/Open WebUI confidence.
+3. Run one D2s setup/network loop for Ollama confidence.
 4. Run teardown and verify no cloud leftovers.
 5. Reserve H100 runs for milestone validations only.
 

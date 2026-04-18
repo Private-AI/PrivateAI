@@ -1,4 +1,9 @@
-"""Extended Phase 3: Validate setup scripts for Ollama and Open WebUI."""
+"""Extended Phase 3: Validate VM setup scripts for Ollama on a cheap D2s_v5.
+
+Open WebUI is NOT installed on the cloud VM — it runs locally alongside
+the backend. These tests therefore only verify the remote Ollama
+surface (service, environment, local + remote HTTP endpoints).
+"""
 
 from __future__ import annotations
 
@@ -27,8 +32,6 @@ def setup_ready_d2s() -> dict[str, object]:
     credentials = get_live_credentials()
     config = build_d2s_config(
         name_prefix="privateai-setup",
-        deploy_open_webui=True,
-        open_webui_port=3000,
         models=["gemma3:4b"],
     )
 
@@ -62,7 +65,7 @@ def setup_ready_d2s() -> dict[str, object]:
             loop.run_until_complete(provider.destroy(config, credentials))
 
 
-class TestSetupOllamaAndOpenWebUI:
+class TestSetupOllama:
     def test_setup_steps_complete(self, setup_ready_d2s: dict[str, object]) -> None:
         setup_result = setup_ready_d2s["setup_result"]
         assert setup_result is not None
@@ -71,9 +74,15 @@ class TestSetupOllamaAndOpenWebUI:
             step.step: step.status
             for step in setup_result.steps  # type: ignore[union-attr]
         }
+        # Required steps for every cheap-VPS run.
         assert step_by_name.get("connect") == "completed"
+        assert step_by_name.get("update_system") == "completed"
+        assert step_by_name.get("mount_disk") == "completed"
         assert step_by_name.get("install_ollama") == "completed"
-        assert step_by_name.get("install_open_webui") == "completed"
+        assert step_by_name.get("pull_models") == "completed"
+        # NVIDIA driver step is expected to complete (as a skipped no-op)
+        # on D2s_v5 since the VM has no GPU.
+        assert step_by_name.get("nvidia_driver") == "completed"
 
     def test_validator_reports_ollama_paths(self, setup_ready_d2s: dict[str, object]) -> None:
         provider = setup_ready_d2s["provider"]
@@ -100,7 +109,6 @@ class TestSetupOllamaAndOpenWebUI:
         assert checks["Ollama API (remote)"].passed
         assert checks["Ollama bound to 0.0.0.0"].passed
         assert checks["Ollama model dir"].passed
-        assert checks["Open WebUI container"].passed
 
     def test_ollama_tags_endpoint_reachable(self, setup_ready_d2s: dict[str, object]) -> None:
         ip = setup_ready_d2s["public_ip"]
@@ -111,11 +119,3 @@ class TestSetupOllamaAndOpenWebUI:
             assert resp.status == 200
             payload = json.loads(resp.read().decode("utf-8"))
             assert "models" in payload
-
-    def test_open_webui_http_reachable(self, setup_ready_d2s: dict[str, object]) -> None:
-        ip = setup_ready_d2s["public_ip"]
-        assert ip
-
-        req = urllib.request.Request(f"http://{ip}:3000", method="GET")
-        with urllib.request.urlopen(req, timeout=20) as resp:
-            assert 200 <= resp.status < 400

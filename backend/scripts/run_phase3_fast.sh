@@ -60,9 +60,9 @@ run_step "phase3-cheap-vm" \
   "AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s" \
   "01-cheap-vm.log"
 
-run_step "phase3-setup-webui" \
-  "AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama_webui.py -m phase3 -v -s" \
-  "02-setup-webui.log"
+run_step "phase3-setup-ollama" \
+  "AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s" \
+  "02-setup-ollama.log"
 
 echo
 echo "Fast phase3 flow completed successfully. Logs: $LOG_DIR"

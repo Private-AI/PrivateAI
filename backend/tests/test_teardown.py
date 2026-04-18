@@ -9,7 +9,6 @@ To also destroy production resources:
 
 from __future__ import annotations
 
-import asyncio
 import os
 from pathlib import Path
 
@@ -22,7 +21,7 @@ from app.models.deployment import (
     SecurityLevel,
 )
 from app.providers.azure.provider import AzureProvider
-from tests.live_test_utils import get_azure_clients
+from tests.live_test_utils import get_azure_clients, get_event_loop
 
 STATE_FILE = Path("/tmp/privateai-test-state.json")
 
@@ -55,7 +54,9 @@ def _iter_tagged_test_resource_groups(credentials: AzureCredentials) -> list[str
         if p.strip()
     )
     protected = {
-        p.strip() for p in os.environ.get("AZURE_PROTECTED_RGS", "h100-conf-rg").split(",") if p.strip()
+        p.strip()
+        for p in os.environ.get("AZURE_PROTECTED_RGS", "h100-conf-rg").split(",")
+        if p.strip()
     }
 
     resource_client, _, _ = get_azure_clients(credentials)
@@ -94,7 +95,7 @@ class TestTeardownTest:
         )
         credentials = _get_live_credentials()
 
-        asyncio.get_event_loop().run_until_complete(provider.destroy(config, credentials))
+        get_event_loop().run_until_complete(provider.destroy(config, credentials))
 
     @pytest.mark.phase3
     def test_teardown_tagged_dynamic_test_rgs(self) -> None:
@@ -132,7 +133,7 @@ class TestTeardownProd:
         )
         credentials = _get_live_credentials()
 
-        asyncio.get_event_loop().run_until_complete(provider.destroy(config, credentials))
+        get_event_loop().run_until_complete(provider.destroy(config, credentials))
 
 
 class TestTeardownCleanup:

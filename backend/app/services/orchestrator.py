@@ -104,20 +104,24 @@ class DeploymentOrchestrator:
             },
         )
 
+        # Capture the running loop up front so thread-based progress
+        # callbacks (from Azure SDK / Paramiko threads) can safely
+        # schedule broadcasts back on to the main event loop.
+        loop = asyncio.get_running_loop()
+
         def _provision_progress(step: str, current: int, total: int, msg: str) -> None:
-            asyncio.get_event_loop().call_soon_threadsafe(
-                lambda: asyncio.ensure_future(
-                    ws_manager.broadcast(
-                        deployment_id,
-                        {
-                            "type": "provision_progress",
-                            "step": step,
-                            "current": current,
-                            "total": total,
-                            "message": msg,
-                        },
-                    )
-                )
+            asyncio.run_coroutine_threadsafe(
+                ws_manager.broadcast(
+                    deployment_id,
+                    {
+                        "type": "provision_progress",
+                        "step": step,
+                        "current": current,
+                        "total": total,
+                        "message": msg,
+                    },
+                ),
+                loop,
             )
 
         result = await provider.provision(
@@ -174,19 +178,18 @@ class DeploymentOrchestrator:
         ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
 
         def _setup_progress(step: str, current: int, total: int, msg: str) -> None:
-            asyncio.get_event_loop().call_soon_threadsafe(
-                lambda: asyncio.ensure_future(
-                    ws_manager.broadcast(
-                        deployment_id,
-                        {
-                            "type": "setup_progress",
-                            "step": step,
-                            "current": current,
-                            "total": total,
-                            "message": msg,
-                        },
-                    )
-                )
+            asyncio.run_coroutine_threadsafe(
+                ws_manager.broadcast(
+                    deployment_id,
+                    {
+                        "type": "setup_progress",
+                        "step": step,
+                        "current": current,
+                        "total": total,
+                        "message": msg,
+                    },
+                ),
+                loop,
             )
 
         setup_result = await provider.setup_vm(

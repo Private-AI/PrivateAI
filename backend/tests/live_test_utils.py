@@ -74,13 +74,16 @@ class LiveDeployment:
 def build_d2s_config(
     *,
     name_prefix: str,
-    deploy_open_webui: bool,
-    open_webui_port: int = 3000,
     models: list[str] | None = None,
     allowed_ssh_sources: list[str] | None = None,
     allowed_api_sources: list[str] | None = None,
     provider_options: dict[str, str] | None = None,
 ) -> DeploymentConfig:
+    """Build a cheap D2s_v5 DeploymentConfig for live tests.
+
+    Note: Open WebUI runs locally alongside the backend — it is never
+    installed on the cloud VM. Only Ollama is configured remotely.
+    """
     suffix = unique_suffix()
     vm_name = f"{name_prefix}-vm-{suffix}"[:63]
     resource_group = f"{name_prefix}-rg-{suffix}"[:63]
@@ -106,10 +109,6 @@ def build_d2s_config(
         data_disk_size_gb=32,
         allowed_ssh_sources=allowed_ssh_sources,
         allowed_api_sources=allowed_api_sources,
-        setup=SetupConfig(
-            models=models,
-            deploy_open_webui=deploy_open_webui,
-            open_webui_port=open_webui_port,
-        ),
+        setup=SetupConfig(models=models),
         provider_options=provider_options,
     )

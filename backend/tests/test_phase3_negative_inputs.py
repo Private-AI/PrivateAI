@@ -40,7 +40,7 @@ class TestNegativeInputs:
     def test_invalid_region_fails_provision_cleanly(self) -> None:
         provider = AzureProvider()
         credentials = get_live_credentials()
-        config = build_d2s_config(name_prefix="privateai-neg-region", deploy_open_webui=False)
+        config = build_d2s_config(name_prefix="privateai-neg-region")
         config.region = "moonbase-1"
 
         loop = get_event_loop()
@@ -51,7 +51,7 @@ class TestNegativeInputs:
     def test_invalid_vm_size_fails_provision_cleanly(self) -> None:
         provider = AzureProvider()
         credentials = get_live_credentials()
-        config = build_d2s_config(name_prefix="privateai-neg-sku", deploy_open_webui=False)
+        config = build_d2s_config(name_prefix="privateai-neg-sku")
         config.vm_size = "Standard_NOT_A_REAL_SKU"
 
         loop = get_event_loop()
@@ -64,7 +64,6 @@ class TestNegativeInputs:
         credentials = get_live_credentials()
         config = build_d2s_config(
             name_prefix="privateai-neg-model",
-            deploy_open_webui=False,
             models=["bad;rm -rf /", "gemma3:4b"],
         )
 

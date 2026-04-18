@@ -230,9 +230,7 @@ in the background.
     "allowed_ssh_sources": ["1.2.3.4/32"],
     "allowed_api_sources": ["1.2.3.4/32"],
     "setup": {
-      "models": ["gemma3:27b-fp16", "gemma3:4b"],
-      "deploy_open_webui": true,
-      "open_webui_port": 3000
+      "models": ["gemma3:27b-fp16", "gemma3:4b"]
     },
     "provider_options": {}
   }
@@ -518,11 +516,13 @@ deployment to receive live updates.
 
 ### SetupConfig
 
-| Field              | Type       | Default       | Description                                |
-|--------------------|------------|---------------|--------------------------------------------|
-| `models`           | `string[]` | `["gemma3:4b"]` | Ollama model tags to pull                |
-| `deploy_open_webui`| `boolean`  | `false`       | Deploy Open WebUI alongside Ollama         |
-| `open_webui_port`  | `integer`  | `3000`        | Port for Open WebUI                        |
+| Field    | Type       | Default         | Description                  |
+|----------|------------|-----------------|------------------------------|
+| `models` | `string[]` | `["gemma3:4b"]` | Ollama model tags to pull    |
+
+Open WebUI is *not* installed on the cloud VM — it is a locally managed
+subprocess on the backend host. See the `/api/v1/open-webui/*`
+endpoints for Open WebUI lifecycle, configuration, and connect flows.
 
 ### DeploymentStatus (enum)
 
@@ -559,11 +559,14 @@ deployment to receive live updates.
 
 ### ServiceEndpoints
 
-| Field        | Type     | Description                      |
-|--------------|----------|----------------------------------|
-| `ssh`        | `string` | SSH connection string            |
-| `ollama_api` | `string` | Ollama REST API URL              |
-| `open_webui` | `string` | Open WebUI URL (empty if not deployed) |
+| Field        | Type     | Description                |
+|--------------|----------|----------------------------|
+| `ssh`        | `string` | SSH connection string      |
+| `ollama_api` | `string` | Ollama REST API URL        |
+
+Open WebUI is a local subprocess reachable at `http://localhost:8080`
+(default port). Its URL and status come from
+`GET /api/v1/open-webui/status`, not from `ServiceEndpoints`.
 
 ---
 
@@ -595,27 +598,29 @@ Management:
 
 ### Infrastructure provisioning steps (Phase 1)
 
-| # | Step             | Description                                    |
-|---|------------------|------------------------------------------------|
-| 1 | resource_group   | Create Azure resource group with tags          |
-| 2 | nsg              | Create NSG with SSH, Ollama, and Open WebUI rules |
-| 3 | vnet             | Create VNet (10.0.0.0/16) + subnet            |
-| 4 | public_ip        | Create static Standard public IP               |
-| 5 | nic              | Create NIC with accelerated networking         |
+| # | Step             | Description                                          |
+|---|------------------|------------------------------------------------------|
+| 1 | resource_group   | Create Azure resource group with tags                |
+| 2 | nsg              | Create NSG with SSH (22) and Ollama (11434) rules    |
+| 3 | vnet             | Create VNet (10.0.0.0/16) + subnet                   |
+| 4 | public_ip        | Create static Standard public IP                     |
+| 5 | nic              | Create NIC with accelerated networking               |
 | 6 | vm               | Create VM (Confidential/TrustedLaunch, SSH key auth) |
-| 7 | data_disk        | Attach empty data disk for models              |
+| 7 | data_disk        | Attach empty data disk for models                    |
 
 ### VM software setup steps (Phase 2)
 
-| # | Step              | Description                                   |
-|---|-------------------|-----------------------------------------------|
-| 1 | connect           | SSH into VM (12 retries, 5s intervals)        |
-| 2 | update_system     | apt-get update && upgrade                     |
-| 3 | mount_disk        | Detect, format, mount data disk at /models    |
-| 4 | nvidia_driver     | Install NVIDIA GPU driver (may require reboot)|
-| 5 | install_ollama    | Install Ollama, configure systemd             |
-| 6 | pull_models       | Pull requested Ollama models                  |
-| 7 | install_open_webui| Deploy Open WebUI Docker container (if requested) |
+| # | Step            | Description                                       |
+|---|-----------------|---------------------------------------------------|
+| 1 | connect         | SSH into VM (12 retries, 5s intervals)            |
+| 2 | update_system   | apt-get update && upgrade                         |
+| 3 | mount_disk      | Detect, format, mount data disk at /models        |
+| 4 | nvidia_driver   | Install NVIDIA GPU driver (may require reboot; skipped on non-GPU SKUs) |
+| 5 | install_ollama  | Install Ollama, configure systemd                 |
+| 6 | pull_models     | Pull requested Ollama models                      |
+
+Open WebUI is not part of the VM setup sequence. It is managed locally
+on the backend host via the `/api/v1/open-webui/*` endpoints.
 
 ---
 
