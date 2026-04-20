@@ -125,7 +125,7 @@ class ConnectDeploymentRequest(BaseModel):
 @router.post(
     "/connect",
     response_model=OpenWebuiStartResponse,
-    responses={400: {"model": ErrorResponse}},
+    responses={400: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
 )
 async def connect_to_deployment(request: ConnectDeploymentRequest):
     """Connect Open WebUI to a deployment's Ollama server via SSH tunnel.
@@ -143,13 +143,16 @@ async def connect_to_deployment(request: ConnectDeploymentRequest):
     ollama_url = f"http://{record.public_ip}:11434"
 
     manager = get_open_webui_manager()
-    state = await manager.connect_to_deployment(
-        deployment_id=request.deployment_id,
-        deployment_name=request.deployment_name,
-        ollama_url=ollama_url,
-        ssh_key_path=ssh_key_path,
-        vm_user=vm_user,
-    )
+    try:
+        state = await manager.connect_to_deployment(
+            deployment_id=request.deployment_id,
+            deployment_name=request.deployment_name,
+            ollama_url=ollama_url,
+            ssh_key_path=ssh_key_path,
+            vm_user=vm_user,
+        )
+    except RuntimeError as e:
+        raise HTTPException(502, detail=str(e)) from e
 
     return OpenWebuiStartResponse(
         success=state.status == "running",

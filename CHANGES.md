@@ -148,17 +148,24 @@ Also added `logger.error` calls logging the last 1000 chars of stdout and 500 ch
 
 **Bonus:** On startup, the backend also checks the deployment store for any running deployments and automatically reconnects the SSH tunnel for the most recent one.
 
-### No Restart on Reconnect
+### Reconnect Uses Restarted Process Config
 
-**Problem:** When the user clicked "Connect & Chat" and Open WebUI was already running, the manager called `restart()` which stopped and restarted the process (30s wait).
+**Problem:** When the user clicked "Connect & Chat" and Open WebUI was already running, the backend tried to hot-update the Ollama URL through Open WebUI's config API. In practice that endpoint returned `401 Unauthorized`, so Open WebUI kept pointing at `localhost:11434` and never switched to the SSH tunnel URL.
 
-**Fix:** If Open WebUI is already running, `connect_to_deployment` now calls `update_ollama_url()` instead of `restart()`. This updates the Ollama URL via the Open WebUI API instantly with no process restart.
+**Fix:** `connect_to_deployment()` now treats the SSH tunnel URL as process configuration and restarts Open WebUI with `OLLAMA_BASE_URLS=http://127.0.0.1:PORT` already set. Startup auto-reconnect now uses the same code path, so manual connects and backend restarts behave the same way.
 
-### Ollama URL Not Updating in Open WebUI
+### Tunnel Failures Surface as Real Errors
 
-**Problem:** Open WebUI stores its Ollama URL in an SQLite database. The env var `OLLAMA_BASE_URLS` was being set correctly, but the database value took precedence and retained the old direct IP (`http://VM_IP:11434`). Since port 11434 is blocked by the NSG, Open WebUI showed "no models available".
+**Problem:** If SSH tunnel setup failed, the manager silently fell back to the VM's direct Ollama URL. That URL is not reachable because port 11434 is intentionally closed in the NSG, so the UI could report success while chat remained broken.
 
-**Fix:** Added `update_ollama_url()` method that calls the Open WebUI admin API after startup to update the Ollama URL in the database, and after every tunnel reconnect. This ensures the database always reflects the current tunnel endpoint (`http://127.0.0.1:PORT`).
+**Fix:** Tunnel setup is now required. `connect_to_deployment()` raises a runtime error when the tunnel cannot be established or the VM IP cannot be derived, and `POST /api/v1/open-webui/connect` now returns `502` instead of pretending the connection succeeded.
+
+### Regression Tests
+
+**Fix:** Added `backend/tests/test_open_webui_manager.py` to cover:
+- reconnecting a running Open WebUI instance through the restart path
+- startup auto-reconnect using the same connect flow
+- surfacing SSH tunnel setup failures
 
 ### Error Visibility on Connect
 

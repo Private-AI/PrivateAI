@@ -241,13 +241,11 @@ class OpenWebuiManager:
         the VM so Ollama traffic is encrypted and port 11434 stays closed
         in the NSG.  Open WebUI then points at the local tunnel endpoint
         (http://127.0.0.1:{port}) instead of the VM's public IP.
-
-        Falls back to the raw ``ollama_url`` if the tunnel cannot be
-        created (e.g. key not found or VM unreachable).
         """
         from app.services.ssh_tunnel import get_tunnel_manager
 
-        # Try to start or reuse SSH tunnel
+        # The deployment flow relies on the SSH tunnel; do not silently
+        # fall back to the public Ollama URL because the NSG keeps 11434 closed.
         effective_url = ollama_url
         tunnel_manager = get_tunnel_manager()
 
@@ -259,27 +257,25 @@ class OpenWebuiManager:
             if m:
                 vm_ip = m.group(1)
 
-        if vm_ip:
-            try:
-                tunnel_url = tunnel_manager.start_tunnel(
-                    deployment_id=deployment_id,
-                    vm_ip=vm_ip,
-                    ssh_key_path=ssh_key_path,
-                    vm_user=vm_user,
-                )
-                effective_url = tunnel_url
-                logger.info(
-                    "SSH tunnel active for %s: %s → %s",
-                    deployment_id[:8],
-                    tunnel_url,
-                    ollama_url,
-                )
-            except Exception as e:
-                logger.warning(
-                    "SSH tunnel failed for %s, using direct URL: %s",
-                    deployment_id[:8],
-                    e,
-                )
+        if not vm_ip:
+            raise RuntimeError("Could not determine VM IP for SSH tunnel setup")
+
+        try:
+            tunnel_url = tunnel_manager.start_tunnel(
+                deployment_id=deployment_id,
+                vm_ip=vm_ip,
+                ssh_key_path=ssh_key_path,
+                vm_user=vm_user,
+            )
+            effective_url = tunnel_url
+            logger.info(
+                "SSH tunnel active for %s: %s → %s",
+                deployment_id[:8],
+                tunnel_url,
+                ollama_url,
+            )
+        except Exception as e:
+            raise RuntimeError(f"SSH tunnel setup failed: {e}") from e
 
         with self._lock:
             already_connected = (
@@ -305,9 +301,9 @@ class OpenWebuiManager:
             is_running = self._status == OpenWebuiStatus.RUNNING
 
         if is_running:
-            # Already running — just update the Ollama URL via API (no restart)
-            await self.update_ollama_url(effective_url)
-            return self.get_state()
+            # Open WebUI's runtime config API can reject unauthenticated writes,
+            # so reconnect by restarting with the tunnel URL in the process env.
+            return await self.restart()
         else:
             return await self.start()
 

@@ -72,7 +72,6 @@ async def _startup() -> None:
 async def _start_open_webui(manager) -> None:
     import logging
     from app.services.deployment_store import get_store
-    from app.services.ssh_tunnel import get_tunnel_manager
 
     log = logging.getLogger(__name__)
     state = await manager.start()
@@ -83,22 +82,24 @@ async def _start_open_webui(manager) -> None:
         running = [d for d in store.list_all() if d.status == "running" and d.public_ip]
         if running:
             latest = max(running, key=lambda d: d.updated_at)
-            creds = store.get_credentials(latest.id)
-            if creds:
-                ssh_key = latest.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
-                vm_user = latest.provider_metadata.get("vm_user", "azureuser")
-                ollama_url = f"http://{latest.public_ip}:11434"
-                try:
-                    tunnel_url = get_tunnel_manager().start_tunnel(
-                        deployment_id=latest.id,
-                        vm_ip=latest.public_ip,
-                        ssh_key_path=ssh_key,
-                        vm_user=vm_user,
-                    )
-                    await manager.update_ollama_url(tunnel_url)
-                    log.info("Auto-reconnected tunnel for deployment %s at %s", latest.id[:8], tunnel_url)
-                except Exception as e:
-                    log.warning("Auto-reconnect tunnel failed: %s", e)
+            ssh_key = latest.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+            vm_user = latest.provider_metadata.get("vm_user", "azureuser")
+            ollama_url = f"http://{latest.public_ip}:11434"
+            try:
+                state = await manager.connect_to_deployment(
+                    deployment_id=latest.id,
+                    deployment_name=latest.config.vm_name,
+                    ollama_url=ollama_url,
+                    ssh_key_path=ssh_key,
+                    vm_user=vm_user,
+                )
+                log.info(
+                    "Auto-reconnected deployment %s via %s",
+                    latest.id[:8],
+                    state.config.ollama_base_urls,
+                )
+            except Exception as e:
+                log.warning("Auto-reconnect tunnel failed: %s", e)
     else:
         log.warning("Open WebUI failed to start at startup: %s", state.error)
 
