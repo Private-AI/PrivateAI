@@ -1,62 +1,45 @@
-# Backend Testing Procedure
+# Unified Testing Procedure
 
-This guide is the canonical test plan for validating the backend with strong emphasis on:
+This is the single testing runbook for PrivateAI backend and end-to-end validation.
 
-- Azure SDK provisioning correctness
-- Provisioning/setup script behavior (`provider.py`, `vm_setup.py`, `validator.py`)
-- Networking and service reachability (SSH, Ollama)
-- Cost-safe progression from `Standard_D2s_v5` to H100
+It replaces the old split between the general backend test guide and the cheap-VPS guide.
 
-> **Architecture note:** Open WebUI runs locally alongside the backend
-> as a managed subprocess, not on the cloud VM. All VM-side tests
-> therefore only verify SSH, disk mount, NVIDIA driver (where
-> applicable), Ollama service, and the Ollama remote API. There is no
-> Open WebUI container, no port 3000 NSG rule, and no WebUI HTTP check
-> performed against the VM.
+## Current Architecture
 
-The strategy is intentionally staged so you can prove reliability on cheap infrastructure before spending on GPU VMs.
+Test against the product as it exists now, not the older assumptions:
 
----
+- Azure default region is `centralus`, not `eastus`.
+- Cheap validation should focus on CPU VMs first.
+- `TrustedLaunch` is the standard path. Do not plan new test coverage around Confidential VM behavior.
+- Open WebUI runs locally with the backend and auto-starts at backend startup.
+- Deployment state persists across backend restarts in `open-webui-data/deployments.json`.
+- Ollama is intended to be reached through the backend-managed SSH tunnel.
+- Azure NSGs should expose `22` only. Port `11434` should not be opened publicly.
+- The frontend should connect chat using `deployment_id`; it should not send a raw Ollama URL.
 
-## 1) Testing Goals
+## Goals
 
-By the time you finish this plan, you should be confident that:
+By the end of this procedure you should have confidence in:
 
-1. Azure resources are created correctly and consistently through the SDK.
-2. VM setup scripts are robust (idempotent enough, retry-safe, clear failures).
-3. Ollama is configured correctly and reachable from expected networks.
-4. Lifecycle actions (`start`, `stop`, `destroy`, `auto-shutdown`) behave correctly.
-5. H100 testing is only started after objective D2s_v5 gates are met.
+1. Backend API correctness and schema behavior.
+2. Azure provisioning reliability on the cheap path.
+3. VM setup reliability for CPU-first deployments.
+4. Open WebUI startup, reconnect, and tunnel-driven chat flow.
+5. Persistence and recovery after backend restart.
+6. Cleanup behavior when provisioning or setup fails.
 
----
+## One-Time Setup
 
-## 2) Test Pyramid for This Project
-
-Use this order every time:
-
-1. Offline tests (fast, free): lint, config translation, API wiring
-2. Mock-provider API tests (fast, free): orchestration behavior without cloud spend
-3. Live Azure SDK tests on `Standard_D2s_v5` (cheap): infra + setup + networking
-4. Repeatability and failure-mode tests on `Standard_D2s_v5`
-5. Minimal, targeted H100 validation
-
-Do not jump to H100 until D2s_v5 gates pass.
-
----
-
-## 3) Prerequisites
-
-### Local setup
+From `backend/`:
 
 ```bash
-cd backend
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 pip install pytest httpx
 ```
 
-### Required Azure credentials (service principal)
+Set Azure credentials:
 
 ```bash
 export AZURE_SUBSCRIPTION_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
@@ -65,110 +48,21 @@ export AZURE_CLIENT_ID="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
 export AZURE_CLIENT_SECRET="your-client-secret"
 ```
 
-### Optional but recommended environment values
+Recommended environment:
 
 ```bash
 export AZURE_TEST_LIVE=true
-export AZURE_LOCATION=eastus
+export AZURE_LOCATION=centralus
 export PRIVATEAI_TEST_MODE=false
 ```
 
-### SSH key
-
-- Setup and validation use `~/.ssh/id_ed25519` by default.
-- If missing, provisioning may generate one, but pre-creating it is more deterministic.
-
----
-
-## 4) Cost Guardrails (Read First)
-
-1. Always run cheap phases first.
-2. Use `Standard_D2s_v5` as the default live test VM.
-3. Always include teardown steps in every run.
-4. Tag and isolate test resource groups (for easy cleanup).
-5. Never leave VMs running overnight; test `auto-shutdown` in pre-H100 phase.
-
----
-
-## 5) Fast Command Reference
+SSH key requirement:
 
 ```bash
-# Phase 1-2 (free)
-pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v
-
-# Phase 3 baseline live cheap VM
-AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
-
-# Extended Phase 3 live suite (Azure SDK + setup + network + recovery + negative)
-AZURE_TEST_LIVE=true pytest tests/test_phase3_*.py -m phase3 -v -s
-
-# Run only the Ollama setup validation
-AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s
-
-# Phase 4 remote validation (existing baseline)
-AZURE_TEST_VM_IP=<PUBLIC_IP> pytest tests/test_validate_remote.py -m phase4 -v -s
-
-# Teardown utility
-AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
+test -f ~/.ssh/id_ed25519 && echo "OK" || ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519 -N ""
 ```
 
-## 5.1) Recommended Run Order (Live D2s_v5)
-
-Use this order to maximize signal while minimizing spend.
-
-| Order | Command | Primary purpose | Typical duration | Relative cost |
-|------:|---------|-----------------|------------------|---------------|
-| 1 | `pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v` | Free preflight correctness | 1-2 min | $0 |
-| 2 | `AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s` | Baseline end-to-end infra + lifecycle | 8-15 min | Low |
-| 3 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_sdk_assertions.py -m phase3 -v -s` | Azure SDK resource correctness (NSG/NIC/tags/disks) | 8-15 min | Low |
-| 4 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s` | Provisioning scripts + remote Ollama setup validation | 12-25 min | Low-Medium |
-| 5 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_network_restrictions.py -m phase3 -v -s` | CIDR restrictions and endpoint reachability | 10-20 min | Low-Medium |
-| 6 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_recovery_paths.py -m phase3 -v -s` | Stop/start loops and setup/validate recovery | 12-22 min | Medium |
-| 7 | `AZURE_TEST_LIVE=true pytest tests/test_phase3_negative_inputs.py -m phase3 -v -s` | Error handling and input hardening | 10-20 min | Low-Medium |
-| 8 | `AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s` | Final cleanup verification | 1-5 min | $0-$ |
-
-Notes:
-
-- Durations vary by region load, VM allocation delays, and package download speed.
-- Relative cost stays low because all live phases use `Standard_D2s_v5`.
-- For quick daily confidence, run steps 1, 2, and 4; run full sequence before milestones.
-
-## 5.2) Pass/Fail Exit Criteria by Step
-
-Use this table to decide if you can proceed to the next step.
-
-| Step | Must-pass exit criteria | Stop conditions |
-|------|-------------------------|-----------------|
-| 1 | All tests pass, no import/schema failures | Any failed test in lint/dry-run/API |
-| 2 | Provision succeeds, SSH check passes, stop/start passes, teardown succeeds | Provision failure, lifecycle mismatch, teardown failure |
-| 3 | RG/NSG/NIC/PIP/VM/disk assertions all pass | Tag mismatch, missing ports/rules, VM/disk mismatch |
-| 4 | Setup result success, validator confirms Ollama checks, remote HTTP reachable on :11434 | Setup failure, Ollama service/API failure |
-| 5 | NSG source prefixes match expected CIDR and allowed-source connectivity checks pass | Source prefix mismatch, expected ports unreachable from allowed source |
-| 6 | 3 stop/start cycles pass, setup rerun succeeds, post-recovery validate passes | Any cycle fails, setup rerun fails, validation regresses |
-| 7 | Negative tests fail safely with expected error behavior, no crash/no orphaned resources | Unhandled exception, ambiguous errors, leaked resources |
-| 8 | Resource groups deleted, no billable test VM left running, state artifacts cleaned | Any leftover RG/VM or persistent state artifacts |
-
-Promotion gate to H100:
-
-- Only proceed if steps 1-8 pass in sequence at least once.
-- For milestone release confidence, run steps 2-7 on at least 2 regions before H100.
-
----
-
-## 6) Detailed Phases
-
-## Phase 0 - Preflight and Safety Checks (Free)
-
-Purpose: catch environment and account issues before provisioning.
-
-### Checklist
-
-- Verify credentials are set and non-empty.
-- Validate service principal access.
-- Confirm target region supports `Standard_D2s_v5`.
-- Confirm no stale test RG from previous failed run.
-
-### Suggested commands
+Quick sanity check:
 
 ```bash
 python - <<'PY'
@@ -178,141 +72,197 @@ required = [
     "AZURE_TENANT_ID",
     "AZURE_CLIENT_ID",
     "AZURE_CLIENT_SECRET",
+    "AZURE_TEST_LIVE",
 ]
 missing = [k for k in required if not os.environ.get(k)]
-print("missing:", missing)
+print("MISSING:", missing if missing else "none")
+print("AZURE_LOCATION:", os.environ.get("AZURE_LOCATION", "centralus"))
 PY
 ```
 
-Start backend and validate credentials endpoint:
+## Test Order
+
+Run tests in this order every time:
+
+1. Free offline tests.
+2. Mock-mode orchestration checks.
+3. Cheap live Azure validation.
+4. Manual end-to-end chat and persistence checks.
+5. Optional GPU validation after the cheap path is stable.
+
+## Fast Daily Flow
+
+Use this when you want the highest signal for the lowest cost:
 
 ```bash
-uvicorn main:app --host 0.0.0.0 --port 8000
+pytest tests/test_lint.py tests/test_dry_run.py tests/test_api.py -v
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_cheap_vm.py -m phase3 -v -s
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s
+AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
 ```
+
+Pass criteria:
+
+- No failed or error tests.
+- Provision succeeds on a cheap CPU path.
+- Setup completes and validation passes.
+- Cleanup completes and leaves no running test VM behind.
+
+## Phase 1: Offline Tests
+
+Run:
 
 ```bash
-curl -s -X POST http://localhost:8000/api/v1/providers/azure/validate-credentials \
-  -H "Content-Type: application/json" \
-  -d '{
-    "provider": "azure",
-    "subscription_id": "'"$AZURE_SUBSCRIPTION_ID"'",
-    "tenant_id": "'"$AZURE_TENANT_ID"'",
-    "client_id": "'"$AZURE_CLIENT_ID"'",
-    "client_secret": "'"$AZURE_CLIENT_SECRET"'"
-  }' | jq .
+pytest tests/test_lint.py -v
+pytest tests/test_dry_run.py -v
+pytest tests/test_api.py -v
 ```
 
-Expected: `valid: true` with an authentication message.
+These should catch:
 
----
+- import and schema regressions
+- provider registry and endpoint wiring issues
+- Azure parameter translation issues
+- stale API contract changes
 
-## Phase 1 - Offline Static and Contract Tests (Free)
+Stop here if anything fails.
 
-Purpose: fail fast before any cloud calls.
+## Phase 2: Mock-Mode API Checks
 
-### Run
-
-```bash
-pytest tests/test_lint.py -m phase1 -v
-pytest tests/test_dry_run.py -m phase2 -v
-pytest tests/test_api.py -m phase2 -v
-```
-
-### Must-pass scope
-
-- Model and schema imports
-- Provider registry behavior
-- Azure parameter translation (`build_azure_params`)
-- Image parsing logic (`parse_image_reference`)
-- Endpoint wiring and basic API error handling
-
-If anything fails here, stop. Do not run live tests.
-
----
-
-## Phase 2 - Mock-mode Orchestration Tests (Free)
-
-Purpose: validate asynchronous orchestration and WS signaling without Azure spend.
-
-### Setup
+Use mock mode to validate orchestration without Azure spend.
 
 ```bash
 export PRIVATEAI_TEST_MODE=true
 uvicorn main:app --host 0.0.0.0 --port 8000
 ```
 
-### Test objectives
+Validate:
 
-1. `POST /deployments` returns `202` immediately.
-2. WebSocket emits progress events and terminal status (`running` or `failed`).
-3. Dashboard polling endpoints (`/deployments`, `/deployments/{id}`, `/live`) remain coherent.
-4. Lifecycle calls (`start`, `stop`, `destroy`) update state machine as expected.
+1. `POST /api/v1/deployments` returns quickly.
+2. deployment status endpoints stay coherent.
+3. lifecycle actions update state correctly.
+4. frontend polling and websocket consumers still behave.
 
-### Recommendation
+Reset `PRIVATEAI_TEST_MODE=false` before live testing.
 
-- Keep this in CI because it validates orchestration semantics even when Azure is unavailable.
+## Phase 3: Cheap Live Azure Validation
 
----
+This is the main real-cloud validation path.
 
-## Phase 3 - Live Azure SDK Provisioning on Standard_D2s_v5 (Cheap, Critical)
+### Scope
 
-Purpose: validate real Azure SDK provisioning steps and generated infrastructure.
+Prefer CPU-only validation first:
 
-Baseline test file: `tests/test_cheap_vm.py`.
-Extended test files: `tests/test_phase3_*.py`.
+- product-level cheap targets: `micro-cpu`, `test-no-gpu`, `small-cpu`
+- existing pytest live suite: still centered around `Standard_D2s_v5`
 
-### Run baseline
+Use `centralus` unless you are intentionally testing region fallback.
+
+### Baseline Live Run
 
 ```bash
-AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -v -s
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_cheap_vm.py -m phase3 -v -s
 ```
 
-### What baseline covers today
+Expected behavior:
 
-- Provision RG + NSG + VNet + PIP + NIC + VM + data disk
-- VM status fetch
-- SSH connectivity
-- Validation pass (without GPU requirement)
-- Stop/start lifecycle
-- Teardown
+- resource group, NSG, network, public IP, NIC, and VM are created
+- SSH becomes reachable
+- validation passes without GPU requirements
+- stop/start works
+- teardown succeeds
 
-### Azure SDK assertions executed in extended suite
+### Setup Validation
 
-These checks are covered by the extended Phase 3 files:
+```bash
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_phase3_setup_ollama.py -m phase3 -v -s
+```
 
-1. **Resource tagging**
-   - All major resources contain expected tags (`project`, `created-by`).
-2. **NSG rules correctness**
-   - Inbound `22` exists (SSH).
-   - Inbound `11434` exists (Ollama).
-   - No port 3000 rule (Open WebUI is local-only).
-3. **Network placement**
-   - NIC is attached to expected subnet.
-   - Public IP is static Standard SKU.
-4. **VM security profile**
-   - `TrustedLaunch` for standard security tests.
-   - No confidential-only assumptions on D2s_v5 stage.
-5. **Disk attachment**
-   - Data disk exists and attached at expected LUN.
+Confirm:
 
----
+- CPU VMs skip the NVIDIA step instead of failing
+- Ollama install completes within the longer timeout budget
+- `/models/ollama` is writable by the `ollama` service user
+- requested model pulls complete
+- validation output is readable when setup fails
 
-## Phase 4 - Provisioning Script Validation on D2s_v5 (Setup + Validate)
+### Extended Live Suite
 
-Purpose: thoroughly test `vm_setup.py` and `validator.py` behavior on cheap VM.
+Run before milestones or releases:
 
-This phase is mandatory before any H100 validation.
+```bash
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_phase3_sdk_assertions.py -m phase3 -v -s
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_phase3_network_restrictions.py -m phase3 -v -s
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_phase3_recovery_paths.py -m phase3 -v -s
+AZURE_TEST_LIVE=true AZURE_LOCATION=centralus pytest tests/test_phase3_negative_inputs.py -m phase3 -v -s
+AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
+```
 
-Primary automated coverage:
+### What to Verify Manually in Azure
 
-- `tests/test_phase3_setup_ollama.py`
-- `tests/test_phase3_recovery_paths.py`
-- `tests/test_phase3_negative_inputs.py`
+Check these after at least one successful live run:
 
-### Deployment payload (D2s_v5 with setup enabled)
+1. NSG exposes SSH only.
+2. There is no inbound `11434` rule.
+3. VM security type is `TrustedLaunch`.
+4. Failed runs do not leave quota-consuming public IPs or NICs behind.
+5. Cheap CPU runs can use no data disk or a minimal disk layout without validation errors.
 
-Use API-driven deployment (not just provider direct calls) to include
-orchestrator and WebSocket flow.
+## Phase 4: API and UI End-to-End Flow
+
+This phase validates the flow that matters most after the changes in `CHANGES.md`.
+
+Start the backend:
+
+```bash
+uvicorn main:app --host 0.0.0.0 --port 8000
+```
+
+### Provider Preflight
+
+Validate credentials:
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/providers/azure/validate-credentials \
+  -H "Content-Type: application/json" \
+  -d '{
+    "credentials": {
+      "provider": "azure",
+      "subscription_id": "'"$AZURE_SUBSCRIPTION_ID"'",
+      "tenant_id": "'"$AZURE_TENANT_ID"'",
+      "client_id": "'"$AZURE_CLIENT_ID"'",
+      "client_secret": "'"$AZURE_CLIENT_SECRET"'"
+    }
+  }' | jq .
+```
+
+Register Azure providers once per subscription if needed:
+
+```bash
+curl -s -X POST http://localhost:8000/api/v1/providers/azure/setup-permissions \
+  -H "Content-Type: application/json" \
+  -d '{
+    "credentials": {
+      "provider": "azure",
+      "subscription_id": "'"$AZURE_SUBSCRIPTION_ID"'",
+      "tenant_id": "'"$AZURE_TENANT_ID"'",
+      "client_id": "'"$AZURE_CLIENT_ID"'",
+      "client_secret": "'"$AZURE_CLIENT_SECRET"'"
+    }
+  }' | jq .
+```
+
+Optional VM recommendation check:
+
+```bash
+curl -s "http://localhost:8000/api/v1/providers/azure/recommend-vm?model=gemma3:4b" | jq .
+```
+
+### Manual Deployment Smoke Test
+
+Submit a cheap CPU deployment through the API or frontend. If you use the API directly, prefer a current cheap profile shape rather than older confidential or GPU defaults.
+
+Example API payload:
 
 ```bash
 curl -s -X POST http://localhost:8000/api/v1/deployments \
@@ -327,11 +277,13 @@ curl -s -X POST http://localhost:8000/api/v1/deployments \
     },
     "config": {
       "provider": "azure",
-      "region": "eastus",
-      "vm_name": "privateai-d2s-setup-test",
-      "resource_group": "privateai-d2s-setup-rg",
+      "region": "centralus",
+      "vm_name": "privateai-smoke-vm",
+      "resource_group": "privateai-smoke-rg",
       "vm_size": "Standard_D2s_v5",
+      "gpu_enabled": false,
       "security_level": "standard",
+      "data_disk_size_gb": 0,
       "setup": {
         "models": ["gemma3:4b"]
       }
@@ -339,186 +291,54 @@ curl -s -X POST http://localhost:8000/api/v1/deployments \
   }' | jq .
 ```
 
-### Validate setup step-by-step
+Minimum behaviors to verify:
 
-For the resulting VM IP:
+1. Provision succeeds in `centralus`.
+2. If the primary Azure SKU is unavailable, fallback SKUs are attempted.
+3. Failed deploys clean up resources automatically.
+4. Dashboard success flow offers `Connect & Chat`.
+5. Dashboard does not display a public Ollama URL.
 
-1. SSH connection becomes available within retry budget.
-2. `/models` exists and is mounted when disk attach succeeded.
-3. Ollama service is active.
-4. Ollama environment includes:
-   - `OLLAMA_HOST=0.0.0.0:11434`
-   - `OLLAMA_MODELS=/models/ollama`
-5. Model pull result includes requested model(s).
+### Chat Flow Validation
 
-### Expected D2s_v5 behavior for NVIDIA step
+Verify Open WebUI behavior after a deployment is running:
 
-- D2s_v5 has no GPU.
-- Setup should not hard-fail solely because GPU is absent.
-- If driver step is skipped, remaining steps (Ollama, models) should
-  still complete. The `nvidia_driver` step is expected to report
-  `completed` with a `skipped (no GPU detected)` detail.
+1. `GET /api/v1/open-webui/status` shows Open WebUI as running, or it becomes running shortly after backend startup.
+2. `POST /api/v1/open-webui/connect` is called with `deployment_id`, not an Ollama URL.
+3. Clicking `Connect & Chat` opens Open WebUI without a restart delay when Open WebUI is already running.
+4. Open WebUI connects to a local tunnel endpoint such as `http://127.0.0.1:<port>`.
+5. If connect fails, the dashboard shows an error banner instead of silently failing.
 
----
-
-## Phase 5 - Networking Validation (Ollama)
-
-Purpose: ensure real network exposure and access control work as
-intended for the two ports the VM exposes (22, 11434).
-
-### A) Ollama local and remote checks
-
-From VM (SSH):
+Useful checks:
 
 ```bash
-curl -sf http://localhost:11434/api/tags | jq .
-systemctl is-active ollama
-systemctl show ollama --property=Environment
+curl -s http://localhost:8000/api/v1/open-webui/status | jq .
+curl -s http://localhost:8000/api/v1/open-webui/health | jq .
 ```
 
-From test runner host:
+### Persistence and Restart Validation
 
-```bash
-curl -sf http://<VM_IP>:11434/api/tags | jq .
-curl -s http://<VM_IP>:11434/api/generate \
-  -d '{"model":"gemma3:4b","prompt":"ping","stream":false}' | jq .
-```
+This is now required.
 
-Expected:
+After a successful deployment:
 
-- Local endpoint responds.
-- Remote endpoint responds (if NSG allows source).
-- Generate returns a non-empty response.
+1. Confirm the deployment appears in `/app/open-webui-data/deployments.json` or the mounted equivalent.
+2. Restart the backend container or process.
+3. Confirm the deployment list is restored after restart.
+4. Confirm Open WebUI auto-starts again.
+5. Confirm the backend reconnects the tunnel for the most recent running deployment.
+6. Confirm `Connect & Chat` works after restart without creating a new deployment.
 
-### B) Open WebUI (local process on the backend host)
+## Networking Expectations
 
-Open WebUI is managed by the backend as a subprocess on
-`http://localhost:8080` — it is **not** deployed on the cloud VM and
-there is no NSG rule for it. Its health/state is validated separately
-via the `/api/v1/open-webui/*` endpoints, not in the cheap-VPS phase.
+Use these as hard pass/fail rules for current behavior:
 
-### C) NSG source filtering checks
+- `22/tcp` may be reachable according to `allowed_ssh_sources`.
+- `11434/tcp` should not be opened publicly in Azure NSGs.
+- Open WebUI should not be deployed on the cloud VM.
+- The frontend should not rely on `endpoints.ollama_api` being populated for Azure.
 
-Run at least two scenarios:
-
-1. Wide open test (`*`) for rapid bring-up.
-2. Restricted CIDR test (your runner IP only).
-
-Verify behavior:
-
-- Allowed source can access `22` and `11434`.
-- Non-allowed source cannot access `22` or `11434`.
-- Port `3000` must NOT be opened by the provisioner under any scenario.
-
----
-
-## Phase 6 - Lifecycle, Recovery, and Idempotence Tests
-
-Purpose: validate operational reliability over repeated runs.
-
-### Required cases
-
-1. Stop/start cycle at least 3 times on the same D2s VM.
-2. `GET /deployments/{id}/live` reflects current power state after each action.
-3. Re-run setup endpoint `POST /deployments/{id}/setup` after VM restart.
-4. Validate endpoint `POST /deployments/{id}/validate` after each cycle.
-5. Destroy endpoint deletes RG and transitions to terminal state.
-
-### Failure injection cases (recommended)
-
-1. Invalid credentials -> provisioning fails early with useful error.
-2. Invalid region or unavailable SKU -> failure includes Azure message.
-3. Invalid model name (bad characters) -> model skipped safely, setup does not crash.
-4. SSH key missing -> setup/validate fail with explicit key-path error.
-
----
-
-## Phase 7 - Auto-Shutdown and Cost Controls
-
-Purpose: ensure cost safety controls actually work.
-
-### Tests
-
-1. Set auto-shutdown via API:
-
-```bash
-curl -s -X POST http://localhost:8000/api/v1/deployments/<ID>/auto-shutdown \
-  -H "Content-Type: application/json" \
-  -d '{"time_utc":"1800"}' | jq .
-```
-
-2. Confirm schedule exists in Azure (`Microsoft.DevTestLab/schedules`).
-3. Update schedule time and verify change.
-4. Destroy deployment and verify schedule is removed with RG deletion.
-
----
-
-## Phase 8 - Exit Gates Before Any H100 Testing
-
-Do not start H100 tests until all gates below pass.
-
-### Reliability gates on D2s_v5
-
-1. At least 5 full end-to-end runs pass in a row.
-2. At least 2 regions tested successfully (for SKU/region variance).
-3. Setup success rate >= 95% across reruns.
-4. No orphaned resource groups after teardown.
-5. Ollama remote API verified in every run.
-6. Stop/start/setup/validate cycle verified after reboot.
-
-### Evidence to store per run
-
-- Deployment ID
-- Region, VM size, and config payload (sanitized)
-- Provision/setup step timelines
-- Validation output
-- Endpoint checks (Ollama remote API)
-- Final teardown confirmation
-
----
-
-## 9) Minimal H100 Test Plan (After Gates)
-
-Once D2s_v5 gates pass, run a constrained H100 suite:
-
-1. One confidential provisioning run.
-2. One setup run with GPU checks enabled.
-3. Validate `nvidia-smi` and GPU model detection.
-4. Run at least one inference on target large model.
-5. Verify lifecycle actions still work.
-6. Destroy immediately.
-
-Keep H100 runtime short and purpose-driven.
-
----
-
-## 10) Extended Automated Test Files (Implemented)
-
-These files are now part of the recommended pre-H100 test suite.
-
-### Implemented files
-
-1. `tests/test_phase3_sdk_assertions.py`
-   - assert NSG rule payloads (22 + 11434 only), NIC settings, tags,
-     disk properties
-2. `tests/test_phase3_setup_ollama.py`
-   - deploy D2s via provider flow, run setup, assert Ollama health
-     (service, env vars, local + remote API)
-3. `tests/test_phase3_network_restrictions.py`
-   - CIDR restriction behavior for ports 22 + 11434 and absence of
-     port 3000
-4. `tests/test_phase3_recovery_paths.py`
-   - rerun setup, stop/start loops, post-reboot validation
-5. `tests/test_phase3_negative_inputs.py`
-   - invalid creds/region/model tags and error contract assertions
-
-Shared helper file:
-
-- `tests/live_test_utils.py`
-
----
-
-## 11) Teardown and Cleanup
+## Cleanup
 
 Always run cleanup after live tests:
 
@@ -526,7 +346,7 @@ Always run cleanup after live tests:
 AZURE_TEST_LIVE=true pytest tests/test_teardown.py -v -s
 ```
 
-If a run fails mid-way:
+If a run fails midway:
 
 ```bash
 AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -k teardown -v -s
@@ -534,55 +354,78 @@ AZURE_TEST_LIVE=true pytest tests/test_cheap_vm.py -m phase3 -k teardown -v -s
 
 Post-cleanup checks:
 
-1. Resource group no longer exists.
-2. Local test state files are removed.
-3. No running VM from the test remains billable.
+1. No test resource group remains.
+2. No public IP or NIC from the failed run remains.
+3. No billable VM is left running.
+4. Local temporary state files are removed.
 
----
+## Optional GPU Validation
 
-## 12) Troubleshooting Shortlist
+Only do this after the cheap path is stable.
 
-### Live tests skipped
+Run a minimal GPU validation to confirm:
 
-- Ensure `AZURE_TEST_LIVE=true` is set.
+1. GPU VM provisioning succeeds.
+2. NVIDIA setup works on GPU hardware.
+3. model pull and inference work on the intended GPU shape.
+4. destroy and cleanup still succeed.
 
-### Provisioning fails with SKU/region errors
+Do not treat GPU validation as the primary daily confidence path.
 
-- Switch region or confirm SKU availability for `Standard_D2s_v5`.
+## Known Drift to Watch
 
-### SSH times out
+Some older tests and helpers still use older naming such as `Standard_D2s_v5`, `eastus`, or public `11434` assumptions. When updating or interpreting those suites:
 
-- Confirm NSG allows port 22 from your source.
-- Wait for cloud-init/sshd to finish bootstrapping.
-- Verify `~/.ssh/id_ed25519` exists.
+1. prefer `centralus`
+2. prefer CPU-first cheap validation
+3. treat SSH-tunneled Ollama as the intended architecture
+4. treat the absence of public `ollama_api` as correct for Azure
 
-### Ollama local works but remote fails
+## Troubleshooting
 
-- Check `OLLAMA_HOST=0.0.0.0:11434` in systemd environment.
-- Check NSG rule for port `11434` and source CIDR.
+### Live tests are skipped
 
-### Open WebUI does not start / shows login screen
+Set:
 
-Open WebUI runs locally on the backend host, not on the cloud VM.
-Use these endpoints to diagnose it:
+```bash
+export AZURE_TEST_LIVE=true
+```
 
-- `GET /api/v1/open-webui/status` - current state and any error
-- `GET /api/v1/open-webui/health` - simple liveness check
-- `POST /api/v1/open-webui/restart` - recycle the subprocess
+### Azure provisioning fails with capacity errors
 
-If it shows a login screen, confirm `WEBUI_AUTH=False` is being passed
-(the manager sets this by default) and delete
-`open-webui-data/webui.db` if the DB was created under an old
-auth-enabled configuration.
+Use `centralus` first. Confirm fallback SKUs are attempted before treating the run as a regression.
 
----
+### SSH fails after provisioning
 
-## 13) Recommended Daily Flow for Backend Engineers
+Check:
 
-1. Run Phase 1-2 locally before pushing.
-2. Run one D2s live test loop for infrastructure confidence.
-3. Run one D2s setup/network loop for Ollama confidence.
-4. Run teardown and verify no cloud leftovers.
-5. Reserve H100 runs for milestone validations only.
+- `~/.ssh/id_ed25519` exists
+- NSG allows your source to port `22`
+- the VM finished bootstrapping
 
-This flow gives high confidence in Azure SDK + provisioning behavior while keeping cost and risk low.
+### Ollama setup fails on a CPU VM
+
+That is a regression if the failure is caused by NVIDIA setup. The NVIDIA step should be skipped on CPU-only VMs.
+
+### Connect and chat fails after the deployment is running
+
+Check:
+
+- `GET /api/v1/open-webui/status`
+- `GET /api/v1/open-webui/health`
+- backend logs for tunnel creation
+- dashboard error banner text
+
+### Deployment disappears after backend restart
+
+That is a regression. The deployment store should persist to the Open WebUI data volume and reload on startup.
+
+## Exit Gate
+
+Treat the build as healthy only when all of these are true:
+
+1. Offline tests pass.
+2. Cheap live Azure deploy/setup/teardown passes.
+3. Chat connection works through Open WebUI.
+4. Backend restart preserves deployment state.
+5. No orphaned Azure resources remain after failures or teardown.
