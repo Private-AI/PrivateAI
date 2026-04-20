@@ -84,7 +84,7 @@ interface SettingsProps {
 export default function Settings({ onNavigate }: SettingsProps) {
   // --- State ---------------------------------------------------------------
   const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [defaultRegion, setDefaultRegion] = useState("eastus");
+  const [defaultRegion, setDefaultRegion] = useState("centralus");
   const [defaultModels, setDefaultModels] = useState("");
   const [history, setHistory] = useState<DeploymentHistoryEntry[]>([]);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);

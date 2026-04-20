@@ -120,7 +120,6 @@ class ConnectDeploymentRequest(BaseModel):
 
     deployment_id: str = Field(..., description="Deployment ID")
     deployment_name: str = Field(default="", description="Display name")
-    ollama_url: str = Field(..., description="Ollama API base URL (e.g. http://1.2.3.4:11434)")
 
 
 @router.post(
@@ -129,26 +128,33 @@ class ConnectDeploymentRequest(BaseModel):
     responses={400: {"model": ErrorResponse}},
 )
 async def connect_to_deployment(request: ConnectDeploymentRequest):
-    """Connect Open WebUI to a specific deployment's Ollama server.
+    """Connect Open WebUI to a deployment's Ollama server via SSH tunnel.
 
-    The frontend sends the deployment ID, name, and Ollama URL directly
-    so this works even if the backend's in-memory store was cleared.
-    If Open WebUI is already connected to this deployment, it's a no-op.
+    The VM IP is read from the deployment record — never sent from the
+    frontend — so no plaintext Ollama URL crosses the wire.
     """
-    if not request.ollama_url:
-        raise HTTPException(400, detail="ollama_url is required")
+    from app.services.orchestrator import get_orchestrator
+    record = get_orchestrator().store.get(request.deployment_id)
+    if not record or not record.public_ip:
+        raise HTTPException(400, detail="Deployment not found or has no public IP")
+
+    ssh_key_path = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+    vm_user = record.provider_metadata.get("vm_user", "azureuser")
+    ollama_url = f"http://{record.public_ip}:11434"
 
     manager = get_open_webui_manager()
     state = await manager.connect_to_deployment(
         deployment_id=request.deployment_id,
         deployment_name=request.deployment_name,
-        ollama_url=request.ollama_url,
+        ollama_url=ollama_url,
+        ssh_key_path=ssh_key_path,
+        vm_user=vm_user,
     )
 
     return OpenWebuiStartResponse(
         success=state.status == "running",
         message=(
-            f"Open WebUI connected to {request.deployment_name} at {request.ollama_url}"
+            f"Open WebUI connected to {request.deployment_name} (via SSH tunnel)"
             if state.status == "running"
             else f"Failed to connect: {state.error}"
         ),

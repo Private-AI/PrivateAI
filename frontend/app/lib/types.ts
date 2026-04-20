@@ -179,6 +179,25 @@ export interface CostAlert {
 }
 
 // ---------------------------------------------------------------------------
+// Ollama model management
+// ---------------------------------------------------------------------------
+
+export interface OllamaModelDetails {
+  format?: string;
+  family?: string;
+  parameter_size?: string;
+  quantization_level?: string;
+}
+
+export interface OllamaModel {
+  name: string;
+  size: number;
+  digest: string;
+  modified_at: string;
+  details: OllamaModelDetails;
+}
+
+// ---------------------------------------------------------------------------
 // Open WebUI (local)
 // ---------------------------------------------------------------------------
 

@@ -94,17 +94,17 @@ class DeploymentConfig(BaseModel):
 
     # Hardware
     vm_size: str = Field(..., description="VM SKU / instance type (provider-specific string)")
-    gpu_enabled: bool = Field(default=True, description="Whether the VM has a GPU")
+    gpu_enabled: bool = Field(default=False, description="Whether the VM has a GPU")
 
     # Security
     security_level: SecurityLevel = Field(
-        default=SecurityLevel.CONFIDENTIAL,
+        default=SecurityLevel.STANDARD,
         description="Hardware encryption level",
     )
 
     # Disks
     os_disk_size_gb: int = Field(default=256, ge=30, le=4096)
-    data_disk_size_gb: int = Field(default=1024, ge=32, le=16384)
+    data_disk_size_gb: int = Field(default=1024, ge=0, le=16384)
 
     # Networking
     allowed_ssh_sources: list[str] = Field(

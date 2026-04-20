@@ -25,10 +25,13 @@ import TerminalPanel from "@/app/components/TerminalPanel";
 import WebUIPanel from "@/app/components/WebUIPanel";
 import {
   connectOpenWebuiToDeployment,
+  deleteModel,
   destroyDeployment,
   fetchDeploymentLive,
   fetchDeployments,
   fetchOpenWebuiStatus,
+  listModels,
+  pullModel,
   startDeployment,
   stopDeployment,
 } from "@/app/lib/api";
@@ -40,6 +43,7 @@ import {
 import type {
   Deployment,
   DeploymentStatus,
+  OllamaModel,
   ServiceEndpoints,
 } from "@/app/lib/types";
 
@@ -181,6 +185,161 @@ function CopyButton({ text }: { text: string }) {
 }
 
 // ---------------------------------------------------------------------------
+// Model manager panel (shown inside a running deployment card)
+// ---------------------------------------------------------------------------
+
+function formatModelSize(bytes: number): string {
+  if (!bytes) return "";
+  const gb = bytes / 1e9;
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(bytes / 1e6).toFixed(0)} MB`;
+}
+
+function ModelManager({ deploymentId }: { deploymentId: string }) {
+  const [models, setModels] = useState<OllamaModel[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [pullInput, setPullInput] = useState("");
+  const [pulling, setPulling] = useState(false);
+  const [deletingModel, setDeletingModel] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [open, setOpen] = useState(false);
+
+  const loadModels = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const data = await listModels(deploymentId);
+      setModels(data);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Failed to load models");
+    } finally {
+      setLoading(false);
+    }
+  }, [deploymentId]);
+
+  useEffect(() => {
+    if (open) loadModels();
+  }, [open, loadModels]);
+
+  const handlePull = useCallback(async () => {
+    if (!pullInput.trim()) return;
+    setPulling(true);
+    setError(null);
+    try {
+      await pullModel(deploymentId, pullInput.trim());
+      setPullInput("");
+      await loadModels();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Pull failed");
+    } finally {
+      setPulling(false);
+    }
+  }, [deploymentId, pullInput, loadModels]);
+
+  const handleDelete = useCallback(async (model: string) => {
+    setDeletingModel(model);
+    setError(null);
+    try {
+      await deleteModel(deploymentId, model);
+      setModels((prev) => prev.filter((m) => m.name !== model));
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : "Delete failed");
+    } finally {
+      setDeletingModel(null);
+    }
+  }, [deploymentId]);
+
+  return (
+    <div className="border-t border-[var(--border-color)] pt-3">
+      <button
+        type="button"
+        className="flex items-center gap-2 text-xs font-medium text-[var(--fg-secondary)] hover:text-[var(--fg)] transition-colors"
+        onClick={() => setOpen((o) => !o)}
+      >
+        <IconServer size={13} />
+        Models {models.length > 0 && !open ? `(${models.length})` : ""}
+        <span className="ml-auto text-[var(--muted)]">{open ? "▲" : "▼"}</span>
+      </button>
+
+      {open && (
+        <div className="mt-3 flex flex-col gap-3">
+          {/* Pull new model */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              className="input text-xs font-mono flex-1"
+              placeholder="llama3:8b, mistral:7b …"
+              value={pullInput}
+              onChange={(e) => setPullInput(e.target.value)}
+              onKeyDown={(e) => e.key === "Enter" && handlePull()}
+              spellCheck={false}
+            />
+            <button
+              type="button"
+              className="btn btn-primary btn-sm"
+              disabled={pulling || !pullInput.trim()}
+              onClick={handlePull}
+            >
+              {pulling ? <IconLoader size={13} /> : <IconPlus size={13} />}
+              Pull
+            </button>
+          </div>
+
+          {error && (
+            <p className="text-xs text-[var(--error)]">{error}</p>
+          )}
+
+          {/* Model list */}
+          {loading && (
+            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
+              <IconLoader size={13} /> Loading models…
+            </div>
+          )}
+          {!loading && models.length === 0 && (
+            <p className="text-xs text-[var(--muted)]">No models installed yet.</p>
+          )}
+          {models.map((m) => (
+            <div
+              key={m.name}
+              className="flex items-center justify-between gap-2 rounded bg-[var(--bg)] px-3 py-2"
+            >
+              <div className="flex flex-col min-w-0">
+                <span className="text-xs font-mono text-[var(--fg)] truncate">{m.name}</span>
+                {m.size > 0 && (
+                  <span className="text-[10px] text-[var(--muted)]">
+                    {formatModelSize(m.size)}
+                    {m.details?.parameter_size ? ` · ${m.details.parameter_size}` : ""}
+                  </span>
+                )}
+              </div>
+              <button
+                type="button"
+                className="btn btn-ghost btn-icon btn-sm text-[var(--error)] hover:text-[var(--error)] shrink-0"
+                disabled={deletingModel === m.name}
+                onClick={() => handleDelete(m.name)}
+                aria-label={`Delete ${m.name}`}
+                title="Delete model"
+              >
+                {deletingModel === m.name ? <IconLoader size={13} /> : <IconTrash size={13} />}
+              </button>
+            </div>
+          ))}
+
+          <button
+            type="button"
+            className="btn btn-ghost btn-sm self-start"
+            disabled={loading}
+            onClick={loadModels}
+          >
+            <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
+            Refresh
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Empty state
 // ---------------------------------------------------------------------------
 
@@ -220,7 +379,7 @@ interface CardProps {
   onStop: (id: string) => Promise<void>;
   onDestroy: (id: string) => Promise<void>;
   onOpenTerminal: (id: string) => void;
-  onOpenChat: (id: string, name: string, ollamaUrl: string) => void;
+  onOpenChat: (id: string, name: string) => void;
   chatLoadingId: string | null;
   connectedDeploymentId: string;
   loadingAction: string | null;
@@ -240,7 +399,7 @@ function DeploymentCard({
   loadingAction,
 }: CardProps) {
   const sshCommand = d.public_ip ? `ssh root@${d.public_ip}` : null;
-  const ollamaUrl = d.endpoints?.ollama_api ?? null;
+  const canChat = d.status === "running" && !!d.public_ip;
   const isConnected = connectedDeploymentId === d.id;
   const isChatLoading = chatLoadingId === d.id;
   const pulsing = d.status === "provisioning" || d.status === "configuring";
@@ -279,7 +438,7 @@ function DeploymentCard({
       )}
 
       {/* Service links */}
-      {d.status === "running" && (sshCommand || ollamaUrl) && (
+      {d.status === "running" && sshCommand && (
         <div className="flex flex-col gap-2 rounded-md bg-[var(--bg)] p-3">
           {sshCommand && (
             <div className="flex items-center gap-2 text-xs">
@@ -302,31 +461,9 @@ function DeploymentCard({
               </button>
             </div>
           )}
-          {ollamaUrl && (
-            <div className="flex items-center gap-2 text-xs">
-              <IconGlobe size={14} className="shrink-0 text-[var(--muted)]" />
-              <a
-                href={ollamaUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 truncate font-mono text-[var(--accent)] hover:underline"
-              >
-                {ollamaUrl}
-              </a>
-              <a
-                href={ollamaUrl}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-icon btn-sm"
-                aria-label="Open Ollama API"
-              >
-                <IconExternalLink size={14} />
-              </a>
-            </div>
-          )}
 
-          {/* Open Chat — connect Open WebUI to this deployment */}
-          {ollamaUrl && (
+          {/* Open Chat — connect Open WebUI to this deployment via SSH tunnel */}
+          {canChat && (
             <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
@@ -336,7 +473,7 @@ function DeploymentCard({
                     : "btn-secondary"
                 }`}
                 disabled={isChatLoading}
-                onClick={() => onOpenChat(d.id, d.name, ollamaUrl!)}
+                onClick={() => onOpenChat(d.id, d.name)}
               >
                 {isChatLoading ? (
                   <IconLoader size={14} />
@@ -462,6 +599,9 @@ function DeploymentCard({
         )}
       </div>
 
+      {/* Model manager — only when running */}
+      {d.status === "running" && <ModelManager deploymentId={d.id} />}
+
       {/* Bottom: created time + refresh */}
       <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-3">
         <span className="text-xs text-[var(--muted)]">
@@ -506,6 +646,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [costExpanded, setCostExpanded] = useState(false);
   const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
+  const [chatError, setChatError] = useState<string | null>(null);
   const [connectedDeploymentId, setConnectedDeploymentId] = useState("");
 
   // Cost monitoring
@@ -523,20 +664,22 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
   /** Called from a deployment card — connects Open WebUI to this deployment, then opens chat. */
   const handleConnectAndChat = useCallback(
-    async (deploymentId: string, deploymentName: string, ollamaUrl: string) => {
+    async (deploymentId: string, deploymentName: string) => {
       setChatLoadingId(deploymentId);
+      setChatError(null);
       try {
         const result = await connectOpenWebuiToDeployment(
           deploymentId,
           deploymentName,
-          ollamaUrl,
         );
-        setConnectedDeploymentId(deploymentId);
         if (result.success && result.state.url) {
+          setConnectedDeploymentId(deploymentId);
           setOpenPanel({ type: "webui", url: result.state.url });
+        } else {
+          setChatError(result.message || "Open WebUI failed to start");
         }
-      } catch {
-        // error
+      } catch (err) {
+        setChatError(err instanceof Error ? err.message : "Failed to connect");
       } finally {
         setChatLoadingId(null);
       }
@@ -760,6 +903,14 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       {loading && deployments.length === 0 && (
         <div className="flex items-center justify-center py-24">
           <IconLoader size={24} className="text-[var(--muted)]" />
+        </div>
+      )}
+
+      {/* Chat connection error */}
+      {chatError && (
+        <div className="card border-[var(--error)] bg-[var(--error-subtle)] p-3 flex items-center justify-between gap-3">
+          <p className="text-sm text-[var(--error)]">{chatError}</p>
+          <button type="button" className="btn btn-ghost btn-sm shrink-0" onClick={() => setChatError(null)}>Dismiss</button>
         </div>
       )}
 

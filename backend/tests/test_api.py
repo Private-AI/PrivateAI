@@ -51,9 +51,11 @@ class TestProviderEndpoints:
         resp = client.get("/api/v1/providers/azure/vm-sizes")
         assert resp.status_code == 200
         data = resp.json()
-        assert len(data["vm_sizes"]) >= 3
+        assert len(data["vm_sizes"]) >= 4
         ids = [s["id"] for s in data["vm_sizes"]]
-        assert "h100-confidential" in ids
+        assert "micro-cpu" in ids
+        assert "t4-gpu" in ids
+        assert all(not s["confidential"] for s in data["vm_sizes"])
 
     def test_list_vm_sizes_unknown_provider(self) -> None:
         resp = client.get("/api/v1/providers/unknown/vm-sizes")

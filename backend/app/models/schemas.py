@@ -255,6 +255,68 @@ class OpenWebuiConfigUpdateResponse(BaseModel):
     restarted: bool
 
 
+# ── Model management ─────────────────────────────────────────────────
+
+
+class ModelInfo(BaseModel):
+    """Single Ollama model entry as returned by /api/tags."""
+
+    name: str
+    size: int = 0
+    digest: str = ""
+    modified_at: str = ""
+    details: dict[str, Any] = Field(default_factory=dict)
+
+
+class ModelListResponse(BaseModel):
+    """GET /api/v1/deployments/{id}/models — list installed models."""
+
+    models: list[ModelInfo]
+
+
+class PullModelRequest(BaseModel):
+    """POST /api/v1/deployments/{id}/models — pull a model."""
+
+    model: str = Field(..., description="Ollama model tag, e.g. 'llama3:8b'")
+
+
+class PullModelResponse(BaseModel):
+    success: bool
+    model: str
+    message: str = ""
+
+
+class DeleteModelResponse(BaseModel):
+    success: bool
+    model: str
+    message: str = ""
+
+
+# ── Permissions setup ────────────────────────────────────────────────
+
+
+class SetupPermissionsRequest(BaseModel):
+    """POST /api/v1/providers/{provider}/setup-permissions."""
+
+    credentials: Credentials
+
+
+class SetupPermissionsResponse(BaseModel):
+    success: bool
+    message: str
+    providers: dict[str, str] = Field(default_factory=dict)
+
+
+# ── VM recommendation ────────────────────────────────────────────────
+
+
+class RecommendVMResponse(BaseModel):
+    """GET /api/v1/providers/{provider}/recommend-vm?model=llama3:8b"""
+
+    vm_profile_id: str
+    reason: str
+
+
 # ── Errors ───────────────────────────────────────────────────────────
 
 

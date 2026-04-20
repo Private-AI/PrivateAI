@@ -28,7 +28,7 @@ def production_config() -> DeploymentConfig:
         resource_group="h100-conf-rg",
         vm_size="Standard_NCC40ads_H100_v5",
         gpu_enabled=True,
-        security_level=SecurityLevel.CONFIDENTIAL,
+        security_level=SecurityLevel.STANDARD,
         os_disk_size_gb=256,
         data_disk_size_gb=1024,
         setup=SetupConfig(

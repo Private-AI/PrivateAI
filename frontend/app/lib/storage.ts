@@ -59,7 +59,7 @@ const DEFAULT_SETTINGS: AppSettings = {
   theme: "system",
   savedCredentials: null,
   lastProvider: "azure",
-  defaultRegion: "eastus",
+  defaultRegion: "centralus",
   defaultModels: [],
   budgetConfig: null,
 };

@@ -3,6 +3,11 @@
 Refactored from the original ``azure_setup`` CLI package.  All Azure SDK
 calls happen here; the rest of the backend only sees the abstract
 ``CloudProvider`` interface.
+
+Security model: TrustedLaunch throughout (no ConfidentialVM / TEE).
+Networking: only SSH (port 22) is open in the NSG — Ollama traffic
+reaches Open WebUI exclusively via an SSH port-forward tunnel managed
+by ``SSHTunnelManager``.
 """
 
 from __future__ import annotations
@@ -62,10 +67,16 @@ from app.providers.azure.config import (
     AZURE_GPU_REGIONS,
     AZURE_VM_PROFILES,
     build_azure_params,
+    get_fallback_vm_sizes,
     parse_image_reference,
 )
 from app.providers.azure.validator import validate_vm_remote
-from app.providers.azure.vm_setup import setup_vm_remote
+from app.providers.azure.vm_setup import (
+    delete_model_remote,
+    list_models_remote,
+    pull_model_remote,
+    setup_vm_remote,
+)
 from app.providers.base import (
     CloudProvider as CloudProviderBase,
     ProvisionResult,
@@ -192,12 +203,57 @@ class AzureProvider(CloudProviderBase):
         try:
             credential, subscription_id = _get_azure_credential(credentials)
             client = ResourceManagementClient(credential, subscription_id)
-            # A lightweight call to verify the credential works
             rgs = list(client.resource_groups.list())
             return True, f"Authenticated. {len(rgs)} resource group(s) visible."
         except Exception as e:
             logger.warning("Azure credential validation failed: %s", e)
             return False, str(e)
+
+    async def setup_permissions(self, credentials: Credentials) -> dict[str, Any]:
+        """Register required Azure resource providers.
+
+        Returns a dict with ``success``, ``providers``, and ``message``.
+        """
+        import time
+
+        def _setup() -> dict[str, Any]:
+            credential, subscription_id = _get_azure_credential(credentials)
+            resource_client = ResourceManagementClient(credential, subscription_id)
+
+            namespaces = ["Microsoft.Network", "Microsoft.Compute", "Microsoft.Storage"]
+            results: dict[str, str] = {}
+
+            for ns in namespaces:
+                provider = resource_client.providers.get(ns)
+                if provider.registration_state == "Registered":
+                    results[ns] = "already_registered"
+                else:
+                    resource_client.providers.register(ns)
+                    results[ns] = "registering"
+
+            # Wait up to 120 s for all to be Registered
+            deadline = time.time() + 120
+            while time.time() < deadline:
+                all_done = True
+                for ns in namespaces:
+                    if results[ns] != "already_registered":
+                        state = resource_client.providers.get(ns).registration_state
+                        if state == "Registered":
+                            results[ns] = "registered"
+                        else:
+                            all_done = False
+                if all_done:
+                    break
+                time.sleep(5)
+
+            success = all(v in ("registered", "already_registered") for v in results.values())
+            return {
+                "success": success,
+                "providers": results,
+                "message": "All providers registered." if success else "Some providers are still registering — retry in a moment.",
+            }
+
+        return await asyncio.to_thread(_setup)
 
     # ── Provisioning ─────────────────────────────────────────
 
@@ -228,8 +284,15 @@ class AzureProvider(CloudProviderBase):
         network_client = NetworkManagementClient(credential, subscription_id)
         compute_client = ComputeManagementClient(credential, subscription_id)
 
-        total = len(PROVISION_STEPS)
-        steps: list[StepProgress] = [_make_step(s_id, s_label) for s_id, s_label in PROVISION_STEPS]
+        # Skip data disk for very small VMs to save cost
+        skip_data_disk = config.data_disk_size_gb <= 0
+
+        effective_steps = PROVISION_STEPS if not skip_data_disk else [
+            s for s in PROVISION_STEPS if s[0] != "data_disk"
+        ]
+
+        total = len(effective_steps)
+        steps: list[StepProgress] = [_make_step(s_id, s_label) for s_id, s_label in effective_steps]
         result = ProvisionResult(success=False, steps=steps)
 
         def _progress(idx: int, status: str, detail: str = "") -> None:
@@ -241,11 +304,15 @@ class AzureProvider(CloudProviderBase):
                 steps[idx].completed_at = now
             steps[idx].detail = detail
             if progress_callback:
-                progress_callback(steps[idx].step, idx + 1, total, detail)
+                progress_callback(steps[idx].step, status, idx + 1, total, detail)
+
+        # Helper to find step index by id
+        def _idx(step_id: str) -> int:
+            return next(i for i, s in enumerate(steps) if s.step == step_id)
 
         try:
             # ── 1. Resource Group ────────────────────────────
-            _progress(0, "in_progress")
+            _progress(_idx("resource_group"), "in_progress")
             resource_client.resource_groups.create_or_update(
                 az["resource_group"],
                 {
@@ -256,47 +323,35 @@ class AzureProvider(CloudProviderBase):
                     },
                 },
             )
-            _progress(0, "completed")
+            _progress(_idx("resource_group"), "completed")
 
-            # ── 2. NSG ───────────────────────────────────────
-            _progress(1, "in_progress")
-            nsg_rules = [
-                SecurityRule(
-                    name="AllowSSH",
-                    priority=1000,
-                    protocol=SecurityRuleProtocol.TCP,
-                    access=SecurityRuleAccess.ALLOW,
-                    direction=SecurityRuleDirection.INBOUND,
-                    source_address_prefix=az["nsg_ssh_source"],
-                    source_port_range="*",
-                    destination_address_prefix="*",
-                    destination_port_range="22",
-                ),
-                SecurityRule(
-                    name="AllowOllama",
-                    priority=1010,
-                    protocol=SecurityRuleProtocol.TCP,
-                    access=SecurityRuleAccess.ALLOW,
-                    direction=SecurityRuleDirection.INBOUND,
-                    source_address_prefix=az["nsg_ollama_source"],
-                    source_port_range="*",
-                    destination_address_prefix="*",
-                    destination_port_range="11434",
-                ),
-            ]
-
+            # ── 2. NSG — SSH only, no public Ollama port ─────
+            _progress(_idx("nsg"), "in_progress")
             nsg_params = NetworkSecurityGroup(
                 location=az["location"],
-                security_rules=nsg_rules,
+                security_rules=[
+                    SecurityRule(
+                        name="AllowSSH",
+                        priority=1000,
+                        protocol=SecurityRuleProtocol.TCP,
+                        access=SecurityRuleAccess.ALLOW,
+                        direction=SecurityRuleDirection.INBOUND,
+                        source_address_prefix=az["nsg_ssh_source"],
+                        source_port_range="*",
+                        destination_address_prefix="*",
+                        destination_port_range="22",
+                    ),
+                    # Ollama (11434) is intentionally NOT opened here.
+                    # Traffic reaches Ollama via SSH tunnel from the backend.
+                ],
             )
-            nsg_poller = network_client.network_security_groups.begin_create_or_update(
+            nsg_result = network_client.network_security_groups.begin_create_or_update(
                 az["resource_group"], az["nsg_name"], nsg_params
-            )
-            nsg_result = nsg_poller.result(timeout=300)
-            _progress(1, "completed")
+            ).result(timeout=300)
+            _progress(_idx("nsg"), "completed", "SSH only (Ollama via tunnel)")
 
             # ── 3. VNet + Subnet ─────────────────────────────
-            _progress(2, "in_progress")
+            _progress(_idx("vnet"), "in_progress")
             vnet_params = VirtualNetwork(
                 location=az["location"],
                 address_space=AddressSpace(address_prefixes=["10.0.0.0/16"]),
@@ -308,164 +363,157 @@ class AzureProvider(CloudProviderBase):
                     ),
                 ],
             )
-            vnet_poller = network_client.virtual_networks.begin_create_or_update(
+            network_client.virtual_networks.begin_create_or_update(
                 az["resource_group"], az["vnet_name"], vnet_params
-            )
-            vnet_poller.result(timeout=300)
-            _progress(2, "completed")
+            ).result(timeout=300)
+            _progress(_idx("vnet"), "completed")
 
             # ── 4. Public IP ─────────────────────────────────
-            _progress(3, "in_progress")
-            pip_params = PublicIPAddress(
-                location=az["location"],
-                sku={"name": "Standard"},
-                public_ip_allocation_method="Static",
-            )
-            pip_poller = network_client.public_ip_addresses.begin_create_or_update(
-                az["resource_group"], az["pip_name"], pip_params
-            )
-            pip_result = pip_poller.result(timeout=300)
-            _progress(3, "completed")
+            _progress(_idx("public_ip"), "in_progress")
+            pip_result = network_client.public_ip_addresses.begin_create_or_update(
+                az["resource_group"],
+                az["pip_name"],
+                PublicIPAddress(
+                    location=az["location"],
+                    sku={"name": "Standard"},
+                    public_ip_allocation_method="Static",
+                ),
+            ).result(timeout=300)
+            _progress(_idx("public_ip"), "completed")
 
             # ── 5. NIC ───────────────────────────────────────
-            _progress(4, "in_progress")
+            _progress(_idx("nic"), "in_progress")
             subnet_info = network_client.subnets.get(
                 az["resource_group"], az["vnet_name"], az["subnet_name"]
             )
             accel_net = not any(
                 prefix in az["vm_size"]
-                for prefix in (
-                    "Standard_B",
-                    "Standard_A",
-                    "Standard_D1",
-                    "Standard_DS1",
-                )
+                for prefix in ("Standard_B", "Standard_A", "Standard_D1", "Standard_DS1")
             )
-            nic_params = NetworkInterface(
-                location=az["location"],
-                ip_configurations=[
-                    NetworkInterfaceIPConfiguration(
-                        name="ipconfig1",
-                        subnet=subnet_info,
-                        public_ip_address=pip_result,
-                    ),
-                ],
-                enable_accelerated_networking=accel_net,
-            )
-            nic_poller = network_client.network_interfaces.begin_create_or_update(
-                az["resource_group"], az["nic_name"], nic_params
-            )
-            nic_result = nic_poller.result(timeout=300)
-            _progress(4, "completed")
+            nic_result = network_client.network_interfaces.begin_create_or_update(
+                az["resource_group"],
+                az["nic_name"],
+                NetworkInterface(
+                    location=az["location"],
+                    ip_configurations=[
+                        NetworkInterfaceIPConfiguration(
+                            name="ipconfig1",
+                            subnet=subnet_info,
+                            public_ip_address=pip_result,
+                        ),
+                    ],
+                    enable_accelerated_networking=accel_net,
+                ),
+            ).result(timeout=300)
+            _progress(_idx("nic"), "completed")
 
-            # ── 6. VM ────────────────────────────────────────
-            _progress(5, "in_progress", "this takes 3-8 minutes")
+            # ── 6. VM (with SKU fallback on capacity errors) ──
+            _progress(_idx("vm"), "in_progress", "this takes 3-8 minutes")
             ssh_key_data = _read_ssh_public_key(az["ssh_key_path"])
 
-            security_profile: SecurityProfile | None = None
-            os_disk_managed: dict[str, Any] = {
-                "storage_account_type": az["os_disk_type"],
-            }
-
-            if az["security_type"] == "ConfidentialVM":
-                security_profile = SecurityProfile(
-                    security_type="ConfidentialVM",
-                    uefi_settings=UefiSettings(
-                        secure_boot_enabled=az["secure_boot"],
-                        v_tpm_enabled=az["vtpm"],
-                    ),
-                )
-                if az["disk_encryption"]:
-                    os_disk_managed["security_profile"] = {
-                        "security_encryption_type": az["disk_encryption"],
-                    }
-            elif az["security_type"] == "TrustedLaunch":
-                security_profile = SecurityProfile(
-                    security_type="TrustedLaunch",
-                    uefi_settings=UefiSettings(
-                        secure_boot_enabled=az["secure_boot"],
-                        v_tpm_enabled=az["vtpm"],
-                    ),
-                )
-
+            security_profile = SecurityProfile(
+                security_type="TrustedLaunch",
+                uefi_settings=UefiSettings(
+                    secure_boot_enabled=az["secure_boot"],
+                    v_tpm_enabled=az["vtpm"],
+                ),
+            )
             image_ref = parse_image_reference(az["image"])
 
-            vm_params = VirtualMachine(
-                location=az["location"],
-                hardware_profile=HardwareProfile(vm_size=az["vm_size"]),
-                storage_profile=StorageProfile(
-                    image_reference=image_ref,
-                    os_disk=OSDisk(
-                        create_option="FromImage",
-                        disk_size_gb=az["os_disk_size_gb"],
-                        managed_disk=ManagedDiskParameters(**os_disk_managed),
-                    ),
-                ),
-                os_profile=OSProfile(
-                    computer_name=az["vm_name"],
-                    admin_username=az["vm_user"],
-                    linux_configuration=LinuxConfiguration(
-                        disable_password_authentication=True,
-                        ssh=SshConfiguration(
-                            public_keys=[
-                                SshPublicKey(
-                                    path=f"/home/{az['vm_user']}/.ssh/authorized_keys",
-                                    key_data=ssh_key_data,
+            sku_candidates = [az["vm_size"]] + get_fallback_vm_sizes(az["vm_size"])
+            vm_result = None
+            last_sku_error: Exception | None = None
+            for sku in sku_candidates:
+                try:
+                    logger.info("Trying VM SKU: %s", sku)
+                    _progress(_idx("vm"), "in_progress", f"trying {sku}…")
+                    vm_result = compute_client.virtual_machines.begin_create_or_update(
+                        az["resource_group"],
+                        az["vm_name"],
+                        VirtualMachine(
+                            location=az["location"],
+                            hardware_profile=HardwareProfile(vm_size=sku),
+                            storage_profile=StorageProfile(
+                                image_reference=image_ref,
+                                os_disk=OSDisk(
+                                    create_option="FromImage",
+                                    disk_size_gb=az["os_disk_size_gb"],
+                                    managed_disk=ManagedDiskParameters(
+                                        storage_account_type=az["os_disk_type"],
+                                    ),
                                 ),
-                            ],
+                            ),
+                            os_profile=OSProfile(
+                                computer_name=az["vm_name"],
+                                admin_username=az["vm_user"],
+                                linux_configuration=LinuxConfiguration(
+                                    disable_password_authentication=True,
+                                    ssh=SshConfiguration(
+                                        public_keys=[
+                                            SshPublicKey(
+                                                path=f"/home/{az['vm_user']}/.ssh/authorized_keys",
+                                                key_data=ssh_key_data,
+                                            ),
+                                        ],
+                                    ),
+                                ),
+                            ),
+                            network_profile=NetworkProfile(
+                                network_interfaces=[NetworkInterfaceReference(id=nic_result.id)],
+                            ),
+                            security_profile=security_profile,
+                            tags={"project": "privateai", "created-by": "privateai-backend", "vm-sku": sku},
                         ),
-                    ),
-                ),
-                network_profile=NetworkProfile(
-                    network_interfaces=[
-                        NetworkInterfaceReference(id=nic_result.id),
-                    ],
-                ),
-                security_profile=security_profile,
-                tags={
-                    "project": "privateai",
-                    "created-by": "privateai-backend",
-                },
-            )
+                    ).result(timeout=900)
+                    logger.info("VM created with SKU: %s", sku)
+                    break
+                except Exception as e:
+                    if "SkuNotAvailable" in str(e) or "Capacity" in str(e):
+                        logger.warning("SKU %s not available, trying next fallback: %s", sku, e)
+                        last_sku_error = e
+                        continue
+                    raise
 
-            vm_poller = compute_client.virtual_machines.begin_create_or_update(
-                az["resource_group"], az["vm_name"], vm_params
-            )
-            vm_result = vm_poller.result(timeout=900)
+            if vm_result is None:
+                raise last_sku_error or RuntimeError("No available VM SKU found")
+
             result.vm_id = vm_result.id or ""
-            _progress(5, "completed")
+            _progress(_idx("vm"), "completed")
 
-            # ── 7. Data Disk ─────────────────────────────────
-            _progress(6, "in_progress", f"{az['data_disk_size_gb']} GB")
-            current_vm = compute_client.virtual_machines.get(az["resource_group"], az["vm_name"])
-            existing_disks = (
-                current_vm.storage_profile.data_disks
-                if current_vm.storage_profile and current_vm.storage_profile.data_disks
-                else []
-            )
-            next_lun = max((d.lun for d in existing_disks), default=-1) + 1
-
-            data_disk = DataDisk(
-                lun=next_lun,
-                name=az["data_disk_name"],
-                create_option=DiskCreateOptionTypes.EMPTY,
-                disk_size_gb=az["data_disk_size_gb"],
-                managed_disk=ManagedDiskParameters(
-                    storage_account_type=StorageAccountTypes(az["data_disk_type"]),
-                ),
-            )
-            existing_disks.append(data_disk)
-            if current_vm.storage_profile:
-                current_vm.storage_profile.data_disks = existing_disks
-
-            disk_poller = compute_client.virtual_machines.begin_create_or_update(
-                az["resource_group"], az["vm_name"], current_vm
-            )
-            disk_poller.result(timeout=600)
-            _progress(6, "completed")
+            # ── 7. Data Disk (skipped for very small VMs) ────
+            if not skip_data_disk:
+                _progress(_idx("data_disk"), "in_progress", f"{az['data_disk_size_gb']} GB")
+                current_vm = compute_client.virtual_machines.get(
+                    az["resource_group"], az["vm_name"]
+                )
+                existing_disks = (
+                    current_vm.storage_profile.data_disks
+                    if current_vm.storage_profile and current_vm.storage_profile.data_disks
+                    else []
+                )
+                next_lun = max((d.lun for d in existing_disks), default=-1) + 1
+                existing_disks.append(
+                    DataDisk(
+                        lun=next_lun,
+                        name=az["data_disk_name"],
+                        create_option=DiskCreateOptionTypes.EMPTY,
+                        disk_size_gb=az["data_disk_size_gb"],
+                        managed_disk=ManagedDiskParameters(
+                            storage_account_type=StorageAccountTypes(az["data_disk_type"]),
+                        ),
+                    )
+                )
+                if current_vm.storage_profile:
+                    current_vm.storage_profile.data_disks = existing_disks
+                compute_client.virtual_machines.begin_create_or_update(
+                    az["resource_group"], az["vm_name"], current_vm
+                ).result(timeout=600)
+                _progress(_idx("data_disk"), "completed")
 
             # ── Get public IP ────────────────────────────────
-            pip_info = network_client.public_ip_addresses.get(az["resource_group"], az["pip_name"])
+            pip_info = network_client.public_ip_addresses.get(
+                az["resource_group"], az["pip_name"]
+            )
             result.public_ip = pip_info.ip_address or ""
             result.success = True
             result.provider_metadata = {
@@ -495,6 +543,53 @@ class AzureProvider(CloudProviderBase):
             result.error = str(e)
             result.error_detail = traceback.format_exc()
             logger.error("Azure provisioning failed: %s", e, exc_info=True)
+
+            # Auto-cleanup: explicitly delete quota-consuming resources first
+            # (public IP, NIC, VM) so limits are freed immediately, then
+            # delete the whole resource group for full cleanup.
+            rg = az.get("resource_group", "")
+            if rg:
+                try:
+                    resource_client.resource_groups.get(rg)
+                except Exception:
+                    rg = ""  # RG never created — nothing to clean up
+
+            if rg:
+                logger.info("Auto-cleanup starting for resource group %s", rg)
+                # 1. VM — must be deleted before NIC/disk can be freed
+                try:
+                    compute_client.virtual_machines.begin_delete(
+                        rg, az.get("vm_name", "")
+                    ).result(timeout=120)
+                    logger.info("Auto-cleanup: VM deleted")
+                except Exception as ex:
+                    logger.debug("Auto-cleanup VM delete skipped: %s", ex)
+
+                # 2. NIC — must go before public IP can be disassociated
+                try:
+                    network_client.network_interfaces.begin_delete(
+                        rg, az.get("nic_name", "")
+                    ).result(timeout=60)
+                    logger.info("Auto-cleanup: NIC deleted")
+                except Exception as ex:
+                    logger.debug("Auto-cleanup NIC delete skipped: %s", ex)
+
+                # 3. Public IP — delete explicitly so quota is freed NOW
+                try:
+                    network_client.public_ip_addresses.begin_delete(
+                        rg, az.get("pip_name", "")
+                    ).result(timeout=60)
+                    logger.info("Auto-cleanup: public IP deleted — quota freed")
+                except Exception as ex:
+                    logger.debug("Auto-cleanup public IP delete skipped: %s", ex)
+
+                # 4. Delete the whole RG for everything else (async, fire-and-forget)
+                try:
+                    resource_client.resource_groups.begin_delete(rg)
+                    logger.info("Auto-cleanup: resource group %s deletion initiated", rg)
+                except Exception as ex:
+                    logger.warning("Auto-cleanup RG delete failed: %s", ex)
+
             return result
 
     async def check_quota(
@@ -540,7 +635,57 @@ class AzureProvider(CloudProviderBase):
             username=az["vm_user"],
             ssh_key_path=ssh_private_key,
             models=config.setup.models,
+            has_data_disk=config.data_disk_size_gb > 0,
+            has_gpu=config.gpu_enabled,
             progress_callback=progress_callback,
+        )
+
+    # ── Model management (via SSH) ───────────────────────────
+
+    async def list_models(
+        self,
+        config: DeploymentConfig,
+        public_ip: str,
+        ssh_private_key: str,
+    ) -> list[dict[str, Any]]:
+        az = build_azure_params(config)
+        return await asyncio.to_thread(
+            list_models_remote,
+            ip=public_ip,
+            username=az["vm_user"],
+            ssh_key_path=ssh_private_key,
+        )
+
+    async def pull_model(
+        self,
+        config: DeploymentConfig,
+        public_ip: str,
+        ssh_private_key: str,
+        model: str,
+    ) -> dict[str, Any]:
+        az = build_azure_params(config)
+        return await asyncio.to_thread(
+            pull_model_remote,
+            ip=public_ip,
+            username=az["vm_user"],
+            ssh_key_path=ssh_private_key,
+            model=model,
+        )
+
+    async def delete_model(
+        self,
+        config: DeploymentConfig,
+        public_ip: str,
+        ssh_private_key: str,
+        model: str,
+    ) -> dict[str, Any]:
+        az = build_azure_params(config)
+        return await asyncio.to_thread(
+            delete_model_remote,
+            ip=public_ip,
+            username=az["vm_user"],
+            ssh_key_path=ssh_private_key,
+            model=model,
         )
 
     # ── Lifecycle ────────────────────────────────────────────
@@ -602,13 +747,13 @@ class AzureProvider(CloudProviderBase):
             compute_client = ComputeManagementClient(credential, subscription_id)
             network_client = NetworkManagementClient(credential, subscription_id)
 
-            poller = compute_client.virtual_machines.begin_start(
+            compute_client.virtual_machines.begin_start(
                 config.resource_group, config.vm_name
-            )
-            poller.result()
+            ).result()
 
-            pip_name = f"{config.vm_name}-pip"
-            pip = network_client.public_ip_addresses.get(config.resource_group, pip_name)
+            pip = network_client.public_ip_addresses.get(
+                config.resource_group, f"{config.vm_name}-pip"
+            )
             return pip.ip_address or ""
 
         return await asyncio.to_thread(_start)
@@ -621,11 +766,9 @@ class AzureProvider(CloudProviderBase):
         credential, subscription_id = _get_azure_credential(credentials)
 
         def _stop() -> None:
-            compute_client = ComputeManagementClient(credential, subscription_id)
-            poller = compute_client.virtual_machines.begin_deallocate(
+            ComputeManagementClient(credential, subscription_id).virtual_machines.begin_deallocate(
                 config.resource_group, config.vm_name
-            )
-            poller.result()
+            ).result()
 
         await asyncio.to_thread(_stop)
 
@@ -682,12 +825,12 @@ class AzureProvider(CloudProviderBase):
                 resource_client.resource_groups.get(config.resource_group)
             except Exception:
                 return False
-
-            poller = resource_client.resource_groups.begin_delete(config.resource_group)
             try:
-                poller.result(timeout=300)
+                resource_client.resource_groups.begin_delete(config.resource_group).result(
+                    timeout=300
+                )
             except Exception:
-                pass  # deletion may still be in progress
+                pass
             return True
 
         return await asyncio.to_thread(_destroy)
@@ -720,5 +863,4 @@ class AzureProvider(CloudProviderBase):
     ) -> ServiceEndpoints:
         az = build_azure_params(config)
         ssh = f"ssh {az['vm_user']}@{public_ip}" if public_ip else ""
-        ollama = f"http://{public_ip}:11434" if public_ip else ""
-        return ServiceEndpoints(ssh=ssh, ollama_api=ollama)
+        return ServiceEndpoints(ssh=ssh, ollama_api="")

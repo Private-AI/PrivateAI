@@ -58,23 +58,64 @@ app.include_router(terminal.router)
 
 @app.on_event("startup")
 async def _startup() -> None:
+    import asyncio
     from app.services.cost_monitor import get_cost_monitor
     from app.services.open_webui_manager import get_open_webui_manager
 
     get_cost_monitor().start()
-    get_open_webui_manager().start_health_loop()
+    manager = get_open_webui_manager()
+    manager.start_health_loop()
+    # Start Open WebUI in the background so it's ready before first user click
+    asyncio.create_task(_start_open_webui(manager))
+
+
+async def _start_open_webui(manager) -> None:
+    import logging
+    from app.services.deployment_store import get_store
+    from app.services.ssh_tunnel import get_tunnel_manager
+
+    log = logging.getLogger(__name__)
+    state = await manager.start()
+    if state.status == "running":
+        log.info("Open WebUI ready at %s", state.url)
+        # Reconnect tunnel for the most recent running deployment
+        store = get_store()
+        running = [d for d in store.list_all() if d.status == "running" and d.public_ip]
+        if running:
+            latest = max(running, key=lambda d: d.updated_at)
+            creds = store.get_credentials(latest.id)
+            if creds:
+                ssh_key = latest.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+                vm_user = latest.provider_metadata.get("vm_user", "azureuser")
+                ollama_url = f"http://{latest.public_ip}:11434"
+                try:
+                    tunnel_url = get_tunnel_manager().start_tunnel(
+                        deployment_id=latest.id,
+                        vm_ip=latest.public_ip,
+                        ssh_key_path=ssh_key,
+                        vm_user=vm_user,
+                    )
+                    await manager.update_ollama_url(tunnel_url)
+                    log.info("Auto-reconnected tunnel for deployment %s at %s", latest.id[:8], tunnel_url)
+                except Exception as e:
+                    log.warning("Auto-reconnect tunnel failed: %s", e)
+    else:
+        log.warning("Open WebUI failed to start at startup: %s", state.error)
 
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
     from app.services.cost_monitor import get_cost_monitor
     from app.services.open_webui_manager import get_open_webui_manager
+    from app.services.ssh_tunnel import get_tunnel_manager
 
     get_cost_monitor().stop()
 
     manager = get_open_webui_manager()
     manager.stop_health_loop()
     await manager.stop()
+
+    get_tunnel_manager().stop_all()
 
 
 # ── Root endpoints ────────────────────────────────────────────────────

@@ -21,6 +21,8 @@ import {
   createDeployment,
   fetchProviders,
   fetchVMSizes,
+  recommendVM,
+  setupPermissions,
   validateCredentials,
 } from "@/app/lib/api";
 import {
@@ -46,7 +48,15 @@ import type {
 const WIZARD_STEPS = ["Provider", "Credentials", "Configuration", "Deploy"] as const;
 type WizardStep = 0 | 1 | 2 | 3;
 
-const QUICK_MODELS = ["gemma3:4b", "llama3:8b", "mistral:7b"];
+const QUICK_MODELS = ["tinyllama:1.1b", "gemma3:4b", "llama3:8b", "mistral:7b", "llama3:13b"];
+
+/** Compute disk sizes appropriate for a VM profile ID. */
+function diskSizesForVM(vmId: string): { os: number; data: number } {
+  if (vmId === "micro-cpu" || vmId === "test-no-gpu") return { os: 32, data: 0 };
+  if (vmId === "small-cpu") return { os: 32, data: 64 };
+  if (vmId === "medium-cpu") return { os: 64, data: 128 };
+  return { os: 128, data: 256 };
+}
 
 const COMING_SOON_PROVIDERS: { id: string; name: string }[] = [
   { id: "gcp", name: "Google Cloud" },
@@ -243,16 +253,22 @@ function CredentialsStep({
   form,
   onChange,
   onValidate,
+  onSetupPermissions,
   validationResult,
+  permissionsResult,
   validating,
+  settingUpPermissions,
   onBack,
   onNext,
 }: {
   form: CredentialFormState;
   onChange: (update: Partial<CredentialFormState>) => void;
   onValidate: () => void;
+  onSetupPermissions: () => void;
   validationResult: { valid: boolean; message: string } | null;
+  permissionsResult: { success: boolean; message: string } | null;
   validating: boolean;
+  settingUpPermissions: boolean;
   onBack: () => void;
   onNext: () => void;
 }) {
@@ -294,25 +310,52 @@ function CredentialsStep({
         ))}
       </div>
 
-      {/* Validate */}
-      <div className="flex items-center gap-3">
-        <button
-          type="button"
-          className="btn btn-secondary"
-          disabled={!allFilled || validating}
-          onClick={onValidate}
-        >
-          {validating ? <IconLoader size={14} /> : <IconShield size={14} />}
-          Test Credentials
-        </button>
-        {validationResult && (
-          <span className={validationResult.valid ? "badge badge-success" : "badge badge-error"}>
-            {validationResult.valid ? (
-              <><IconCheck size={12} /> Valid</>
-            ) : (
-              <><IconX size={12} /> {validationResult.message}</>
+      {/* Validate + Setup Permissions */}
+      <div className="flex flex-col gap-2">
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="btn btn-secondary"
+            disabled={!allFilled || validating}
+            onClick={onValidate}
+          >
+            {validating ? <IconLoader size={14} /> : <IconShield size={14} />}
+            Test Credentials
+          </button>
+          {validationResult && (
+            <span className={validationResult.valid ? "badge badge-success" : "badge badge-error"}>
+              {validationResult.valid ? (
+                <><IconCheck size={12} /> Valid</>
+              ) : (
+                <><IconX size={12} /> {validationResult.message}</>
+              )}
+            </span>
+          )}
+        </div>
+
+        {/* Only show Setup Permissions once credentials are valid */}
+        {validationResult?.valid && (
+          <div className="flex items-center gap-3">
+            <button
+              type="button"
+              className="btn btn-ghost"
+              disabled={settingUpPermissions}
+              onClick={onSetupPermissions}
+              title="Register Microsoft.Network, Microsoft.Compute, and Microsoft.Storage providers"
+            >
+              {settingUpPermissions ? <IconLoader size={14} /> : <IconCheck size={14} />}
+              Setup Azure Permissions
+            </button>
+            {permissionsResult && (
+              <span className={permissionsResult.success ? "badge badge-success" : "badge badge-error"}>
+                {permissionsResult.success ? (
+                  <><IconCheck size={12} /> Permissions ready</>
+                ) : (
+                  <><IconX size={12} /> {permissionsResult.message}</>
+                )}
+              </span>
             )}
-          </span>
+          </div>
         )}
       </div>
 
@@ -360,6 +403,7 @@ function ConfigStep({
   vmSizesLoading,
   onBack,
   onDeploy,
+  onModelChange,
 }: {
   provider: ProviderInfo;
   form: ConfigFormState;
@@ -368,6 +412,7 @@ function ConfigStep({
   vmSizesLoading: boolean;
   onBack: () => void;
   onDeploy: () => void;
+  onModelChange: (model: string) => void;
 }) {
   const selectedVM = vmSizes.find((v) => v.id === form.vmSize);
   const canDeploy = form.region.length > 0 && form.vmSize.length > 0 && form.model.trim().length > 0;
@@ -377,8 +422,39 @@ function ConfigStep({
       <div>
         <h2 className="text-lg font-semibold text-[var(--fg)]">Configuration</h2>
         <p className="mt-1 text-sm text-[var(--muted)]">
-          Configure your deployment parameters.
+          Choose a region, model, and VM. The app auto-selects the cheapest VM for your model.
         </p>
+      </div>
+
+      {/* Model first — drives VM recommendation */}
+      <div>
+        <label htmlFor="model" className="block text-xs font-medium text-[var(--fg-secondary)] mb-1">
+          AI Model
+        </label>
+        <input
+          id="model"
+          type="text"
+          className="input text-sm font-mono"
+          placeholder="e.g. llama3:8b"
+          value={form.model}
+          onChange={(e) => onModelChange(e.target.value)}
+          spellCheck={false}
+        />
+        <div className="flex flex-wrap gap-2 mt-2">
+          {QUICK_MODELS.map((m) => (
+            <button
+              key={m}
+              type="button"
+              className={[
+                "btn btn-sm",
+                form.model === m ? "btn-primary" : "btn-ghost",
+              ].join(" ")}
+              onClick={() => onModelChange(m)}
+            >
+              {m}
+            </button>
+          ))}
+        </div>
       </div>
 
       {/* Region */}
@@ -406,6 +482,11 @@ function ConfigStep({
         <div className="flex items-center justify-between mb-1">
           <label className="block text-xs font-medium text-[var(--fg-secondary)]">
             VM Size
+            {selectedVM && (
+              <span className="ml-2 font-normal text-[var(--accent)]">
+                ~${selectedVM.cost_per_hour.toFixed(2)}/hr
+              </span>
+            )}
           </label>
           {vmSizesLoading && <IconLoader size={14} className="text-[var(--muted)]" />}
         </div>
@@ -430,103 +511,22 @@ function ConfigStep({
             >
               <div className="flex items-center justify-between gap-2">
                 <p className="text-sm font-medium text-[var(--fg)]">{vm.display_name}</p>
-                <div className="flex items-center gap-1.5">
-                  {vm.confidential && (
-                    <span className="badge badge-accent">
-                      <IconShield size={10} />
-                      Confidential
-                    </span>
-                  )}
-                </div>
+                <span className="text-xs font-medium text-[var(--accent)]">
+                  ${vm.cost_per_hour.toFixed(2)}/hr
+                </span>
               </div>
               <div className="mt-1 flex items-center gap-3 text-xs text-[var(--muted)]">
-                {vm.gpu_model && <span>{vm.gpu_model}</span>}
+                {vm.gpu_model && vm.gpu_model !== "None" && <span>{vm.gpu_model}</span>}
                 <span>{vm.vcpus} vCPUs</span>
                 <span>{vm.memory_gb} GB RAM</span>
               </div>
+              <p className="mt-1 text-xs text-[var(--muted)] line-clamp-2">{vm.description}</p>
             </button>
           ))}
         </div>
-      </div>
-
-      {/* Hardware Encryption */}
-      {selectedVM?.confidential && (
-        <div>
-          <label className="block text-xs font-medium text-[var(--fg-secondary)] mb-2">
-            Hardware Encryption
-          </label>
-          <div className="flex gap-3">
-            <label className={[
-              "card flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-all duration-200",
-              form.securityLevel === "confidential"
-                ? "border-[var(--accent)] ring-1 ring-[var(--ring-color)]"
-                : "",
-            ].join(" ")}>
-              <input
-                type="radio"
-                name="security"
-                value="confidential"
-                checked={form.securityLevel === "confidential"}
-                onChange={() => onChange({ securityLevel: "confidential" })}
-                className="accent-[var(--accent)]"
-              />
-              <div>
-                <p className="text-sm font-medium text-[var(--fg)]">Confidential</p>
-                <p className="text-xs text-[var(--muted)]">Recommended</p>
-              </div>
-            </label>
-            <label className={[
-              "card flex items-center gap-2 px-4 py-2.5 cursor-pointer transition-all duration-200",
-              form.securityLevel === "standard"
-                ? "border-[var(--accent)] ring-1 ring-[var(--ring-color)]"
-                : "",
-            ].join(" ")}>
-              <input
-                type="radio"
-                name="security"
-                value="standard"
-                checked={form.securityLevel === "standard"}
-                onChange={() => onChange({ securityLevel: "standard" })}
-                className="accent-[var(--accent)]"
-              />
-              <div>
-                <p className="text-sm font-medium text-[var(--fg)]">Standard</p>
-                <p className="text-xs text-[var(--muted)]">No TEE</p>
-              </div>
-            </label>
-          </div>
-        </div>
-      )}
-
-      {/* Model */}
-      <div>
-        <label htmlFor="model" className="block text-xs font-medium text-[var(--fg-secondary)] mb-1">
-          Model
-        </label>
-        <input
-          id="model"
-          type="text"
-          className="input text-sm font-mono"
-          placeholder="e.g. llama3:8b"
-          value={form.model}
-          onChange={(e) => onChange({ model: e.target.value })}
-          spellCheck={false}
-        />
-        <div className="flex gap-2 mt-2">
-          {QUICK_MODELS.map((m) => (
-            <button
-              key={m}
-              type="button"
-              className={[
-                "btn btn-sm",
-                form.model === m ? "btn-primary" : "btn-ghost",
-              ].join(" ")}
-              onClick={() => onChange({ model: m })}
-            >
-              {m}
-            </button>
-          ))}
-        </div>
+        <p className="mt-1.5 text-xs text-[var(--muted)]">
+          VM auto-selected based on model size. Traffic to Ollama is encrypted via SSH tunnel.
+        </p>
       </div>
 
       {/* Nav */}
@@ -688,58 +688,51 @@ function DeployStep({
         </div>
       )}
 
-      {/* Success endpoints */}
-      {isComplete && endpoints && (
-        <div className="card p-4 flex flex-col gap-3">
-          <p className="text-xs font-medium text-[var(--muted)] uppercase tracking-wide">
-            Service Endpoints
-          </p>
-          {endpoints.ssh && (
-            <div className="flex items-center gap-2 text-xs">
+      {/* Success state */}
+      {isComplete && (
+        <div className="flex flex-col gap-3">
+          {/* Chat CTA */}
+          <div className="card p-4 flex flex-col gap-3 border-[var(--accent)] bg-[var(--accent-subtle)]">
+            <p className="text-sm font-semibold text-[var(--fg)]">Your private AI is ready</p>
+            <p className="text-xs text-[var(--muted)]">
+              Open WebUI is running and connected to Ollama via SSH tunnel. Click below to start chatting.
+            </p>
+            <button
+              type="button"
+              className="btn btn-primary w-full"
+              onClick={() => onNavigate("dashboard")}
+            >
+              <IconChat size={14} />
+              Connect &amp; Chat
+            </button>
+          </div>
+
+          {/* SSH access (collapsed/secondary) */}
+          {endpoints?.ssh && (
+            <div className="flex items-center gap-2 text-xs px-1">
               <IconTerminal size={14} className="shrink-0 text-[var(--muted)]" />
-              <code className="flex-1 truncate font-mono text-[var(--fg-secondary)]">
+              <code className="flex-1 truncate font-mono text-[var(--muted)]">
                 {endpoints.ssh}
               </code>
               <CopyButton text={endpoints.ssh} />
             </div>
           )}
-          {endpoints.ollama_api && (
-            <div className="flex items-center gap-2 text-xs">
-              <IconGlobe size={14} className="shrink-0 text-[var(--muted)]" />
-              <a
-                href={endpoints.ollama_api}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex-1 truncate font-mono text-[var(--accent)] hover:underline"
-              >
-                {endpoints.ollama_api}
-              </a>
-              <a
-                href={endpoints.ollama_api}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="btn btn-ghost btn-sm"
-                aria-label="Open Ollama API"
-              >
-                <IconExternalLink size={14} />
-              </a>
-            </div>
-          )}
-
         </div>
       )}
 
       {/* Bottom actions */}
       {(isComplete || isFailed) && (
         <div className="flex justify-end pt-2">
-          <button
-            type="button"
-            className="btn btn-primary"
-            onClick={() => onNavigate("dashboard")}
-          >
-            Go to Dashboard
-            <IconChevronRight size={14} />
-          </button>
+          {isFailed && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={() => onNavigate("dashboard")}
+            >
+              Go to Dashboard
+              <IconChevronRight size={14} />
+            </button>
+          )}
         </div>
       )}
     </div>
@@ -771,12 +764,14 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
   });
   const [validationResult, setValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
   const [validating, setValidating] = useState(false);
+  const [permissionsResult, setPermissionsResult] = useState<{ success: boolean; message: string } | null>(null);
+  const [settingUpPermissions, setSettingUpPermissions] = useState(false);
 
   // --- Step 3: Configuration ---
   const [configForm, setConfigForm] = useState<ConfigFormState>({
     region: "",
     vmSize: "",
-    securityLevel: "confidential",
+    securityLevel: "standard",
     model: "",
   });
   const [vmSizes, setVmSizes] = useState<VMSize[]>([]);
@@ -811,7 +806,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     // Pre-fill config defaults
     setConfigForm((prev) => ({
       ...prev,
-      region: settings.defaultRegion || "eastus",
+      region: settings.defaultRegion || "centralus",
       model: settings.defaultModels?.[0] || "",
     }));
   }, []);
@@ -898,6 +893,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     if (!selectedProvider) return;
     setValidating(true);
     setValidationResult(null);
+    setPermissionsResult(null);
     try {
       const creds: AzureCredentials = {
         provider: "azure",
@@ -913,6 +909,28 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       setValidationResult({ valid: false, message });
     } finally {
       setValidating(false);
+    }
+  }, [selectedProvider, credForm]);
+
+  const handleSetupPermissions = useCallback(async () => {
+    if (!selectedProvider) return;
+    setSettingUpPermissions(true);
+    setPermissionsResult(null);
+    try {
+      const creds: AzureCredentials = {
+        provider: "azure",
+        subscription_id: credForm.subscription_id,
+        tenant_id: credForm.tenant_id,
+        client_id: credForm.client_id,
+        client_secret: credForm.client_secret,
+      };
+      const result = await setupPermissions(selectedProvider.id, creds);
+      setPermissionsResult({ success: result.success, message: result.message });
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : "Permission setup failed";
+      setPermissionsResult({ success: false, message });
+    } finally {
+      setSettingUpPermissions(false);
     }
   }, [selectedProvider, credForm]);
 
@@ -950,6 +968,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     };
 
     const selectedVM = vmSizes.find((v) => v.id === configForm.vmSize);
+    const disks = diskSizesForVM(configForm.vmSize);
 
     const config: DeploymentConfig = {
       provider: selectedProvider.id as CloudProvider,
@@ -958,11 +977,11 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       resource_group: `privateai-rg-${Date.now().toString(36)}`,
       vm_size: selectedVM?.vm_size ?? configForm.vmSize,
       gpu_enabled: (selectedVM?.gpus ?? 0) > 0,
-      security_level: configForm.securityLevel,
-      os_disk_size_gb: 128,
-      data_disk_size_gb: 256,
+      security_level: "standard",   // Always TrustedLaunch — no TEE
+      os_disk_size_gb: disks.os,
+      data_disk_size_gb: disks.data,
       allowed_ssh_sources: ["*"],
-      allowed_api_sources: ["*"],
+      allowed_api_sources: [],       // Ollama not exposed publicly; only SSH
       setup: {
         models: [configForm.model],
       },
@@ -986,6 +1005,26 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
         endpoints: { ssh: null, ollama_api: null },
       });
 
+      // Pre-populate step lists so the UI shows pending steps immediately
+      const hasDisk = disks.data > 0;
+      setProvisionSteps([
+        { step: "resource_group", label: "Creating resource group",         status: "pending", detail: "" },
+        { step: "nsg",            label: "Creating security group",          status: "pending", detail: "" },
+        { step: "vnet",           label: "Creating virtual network",         status: "pending", detail: "" },
+        { step: "public_ip",      label: "Allocating public IP",             status: "pending", detail: "" },
+        { step: "nic",            label: "Creating network interface",       status: "pending", detail: "" },
+        { step: "vm",             label: "Creating virtual machine",         status: "pending", detail: "" },
+        ...(hasDisk ? [{ step: "data_disk", label: "Attaching data disk",   status: "pending" as const, detail: "" }] : []),
+      ]);
+      setSetupSteps([
+        { step: "connect",        label: "Connecting via SSH",               status: "pending", detail: "" },
+        { step: "update_system",  label: "Updating system packages",         status: "pending", detail: "" },
+        { step: "mount_disk",     label: "Preparing model storage",          status: "pending", detail: "" },
+        { step: "nvidia_driver",  label: "NVIDIA driver (skipped on CPU)",   status: "pending", detail: "" },
+        { step: "install_ollama", label: "Installing Ollama",                status: "pending", detail: "" },
+        { step: "pull_models",    label: `Pulling ${config.setup?.models?.join(", ") ?? "models"}`, status: "pending", detail: "" },
+      ]);
+
       // Connect WebSocket for live progress
       const ws = connectDeploymentWS(result.id);
       wsRef.current = ws;
@@ -993,23 +1032,36 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       ws.onmessage = (event: MessageEvent) => {
         try {
           const data = JSON.parse(event.data as string) as {
+            type?: string;
+            step?: string;
             status?: string;
-            provision_steps?: StepProgress[];
-            setup_steps?: StepProgress[];
+            message?: string;
             error?: string | null;
             error_detail?: string | null;
             endpoints?: ServiceEndpoints | null;
             public_ip?: string | null;
           };
 
-          if (data.provision_steps) {
-            setProvisionSteps(data.provision_steps);
+          // Individual step progress (provision phase)
+          if (data.type === "provision_progress" && data.step) {
+            setProvisionSteps(prev => prev.map(s =>
+              s.step === data.step
+                ? { ...s, status: (data.status ?? "in_progress") as StepProgress["status"], detail: data.message ?? s.detail }
+                : s
+            ));
           }
-          if (data.setup_steps) {
-            setSetupSteps(data.setup_steps);
+
+          // Individual step progress (setup phase)
+          if (data.type === "setup_progress" && data.step) {
+            setSetupSteps(prev => prev.map(s =>
+              s.step === data.step
+                ? { ...s, status: (data.status ?? "in_progress") as StepProgress["status"], detail: data.message ?? s.detail }
+                : s
+            ));
           }
-          if (data.endpoints) {
-            setDeployEndpoints(data.endpoints);
+
+          if (data.type === "provision_complete" || data.endpoints) {
+            if (data.endpoints) setDeployEndpoints(data.endpoints);
           }
 
           if (data.status === "running") {
@@ -1065,6 +1117,22 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     }
   }, [selectedProvider, credForm, configForm, vmSizes, goToStep]);
 
+  // --- Model change with VM auto-recommendation ---
+  const handleModelChange = useCallback(async (model: string) => {
+    setConfigForm((prev) => ({ ...prev, model }));
+    if (!model.trim() || !selectedProvider) return;
+    try {
+      const rec = await recommendVM(selectedProvider.id, model);
+      setConfigForm((prev) => {
+        const match = vmSizes.find((v) => v.id === rec.vm_profile_id);
+        if (!match) return { ...prev, model };
+        return { ...prev, model, vmSize: rec.vm_profile_id };
+      });
+    } catch {
+      // Silently ignore — user can still select VM manually
+    }
+  }, [selectedProvider, vmSizes]);
+
   // --- Back navigation ---
   const handleBack = useCallback(
     (from: WizardStep) => {
@@ -1114,8 +1182,11 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
             form={credForm}
             onChange={(update) => setCredForm((prev) => ({ ...prev, ...update }))}
             onValidate={handleCredValidate}
+            onSetupPermissions={handleSetupPermissions}
             validationResult={validationResult}
+            permissionsResult={permissionsResult}
             validating={validating}
+            settingUpPermissions={settingUpPermissions}
             onBack={() => handleBack(1)}
             onNext={handleCredNext}
           />
@@ -1130,6 +1201,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
             vmSizesLoading={vmSizesLoading}
             onBack={() => handleBack(2)}
             onDeploy={handleDeploy}
+            onModelChange={handleModelChange}
           />
         )}
 

@@ -167,6 +167,10 @@ class OpenWebuiManager:
                     self._error = "Open WebUI did not become healthy within timeout"
                     logger.warning("Open WebUI startup timeout")
 
+            # Push Ollama URL via API so DB reflects the tunnel URL
+            if healthy and self._config.ollama_base_urls:
+                await self.update_ollama_url(self._config.ollama_base_urls)
+
         except Exception as e:
             with self._lock:
                 self._status = OpenWebuiStatus.ERROR
@@ -228,25 +232,65 @@ class OpenWebuiManager:
         deployment_id: str,
         deployment_name: str,
         ollama_url: str,
+        ssh_key_path: str = "~/.ssh/id_ed25519",
+        vm_user: str = "azureuser",
     ) -> OpenWebuiState:
-        """Connect Open WebUI to a specific deployment's Ollama server.
+        """Connect Open WebUI to a deployment's Ollama server via SSH tunnel.
 
-        If Open WebUI is already running and connected to a *different*
-        deployment, it is automatically restarted with the new URL.
-        If it's already connected to this deployment, return the current state.
-        If it's stopped, start it with the deployment's URL.
+        An SSH port-forward tunnel is established from this backend to
+        the VM so Ollama traffic is encrypted and port 11434 stays closed
+        in the NSG.  Open WebUI then points at the local tunnel endpoint
+        (http://127.0.0.1:{port}) instead of the VM's public IP.
+
+        Falls back to the raw ``ollama_url`` if the tunnel cannot be
+        created (e.g. key not found or VM unreachable).
         """
+        from app.services.ssh_tunnel import get_tunnel_manager
+
+        # Try to start or reuse SSH tunnel
+        effective_url = ollama_url
+        tunnel_manager = get_tunnel_manager()
+
+        # Extract IP from URL like "http://1.2.3.4:11434" or plain IP
+        vm_ip = ""
+        if ollama_url:
+            import re
+            m = re.search(r"(\d{1,3}(?:\.\d{1,3}){3})", ollama_url)
+            if m:
+                vm_ip = m.group(1)
+
+        if vm_ip:
+            try:
+                tunnel_url = tunnel_manager.start_tunnel(
+                    deployment_id=deployment_id,
+                    vm_ip=vm_ip,
+                    ssh_key_path=ssh_key_path,
+                    vm_user=vm_user,
+                )
+                effective_url = tunnel_url
+                logger.info(
+                    "SSH tunnel active for %s: %s → %s",
+                    deployment_id[:8],
+                    tunnel_url,
+                    ollama_url,
+                )
+            except Exception as e:
+                logger.warning(
+                    "SSH tunnel failed for %s, using direct URL: %s",
+                    deployment_id[:8],
+                    e,
+                )
+
         with self._lock:
             already_connected = (
                 self._status == OpenWebuiStatus.RUNNING
                 and self._connected_deployment_id == deployment_id
-                and self._config.ollama_base_urls == ollama_url
+                and self._config.ollama_base_urls == effective_url
             )
             if already_connected:
                 return self.get_state()
 
-            # Update the Ollama URL in config
-            self._config.ollama_base_urls = ollama_url
+            self._config.ollama_base_urls = effective_url
             self._connected_deployment_id = deployment_id
             self._connected_deployment_name = deployment_name
 
@@ -254,17 +298,54 @@ class OpenWebuiManager:
             "Connecting Open WebUI to deployment %s (%s) at %s",
             deployment_id[:8],
             deployment_name,
-            ollama_url,
+            effective_url,
         )
 
-        # If running, restart with the new URL; if stopped, start fresh
         with self._lock:
             is_running = self._status == OpenWebuiStatus.RUNNING
 
         if is_running:
-            return await self.restart()
+            # Already running — just update the Ollama URL via API (no restart)
+            await self.update_ollama_url(effective_url)
+            return self.get_state()
         else:
             return await self.start()
+
+    async def update_ollama_url(self, ollama_url: str) -> None:
+        """Update the Ollama base URL in the running Open WebUI instance.
+
+        Calls the Open WebUI admin API — no restart required.
+        Also updates self._config so future restarts use the correct URL.
+        """
+        with self._lock:
+            self._config.ollama_base_urls = ollama_url
+            port = self._config.port
+
+        api = f"http://localhost:{port}"
+        async with httpx.AsyncClient() as client:
+            try:
+                # Open WebUI API: update Ollama connection URL
+                # Works without auth token when WEBUI_AUTH=false
+                r = await client.post(
+                    f"{api}/api/v1/configs/ollama",
+                    json={"url": ollama_url},
+                    timeout=5,
+                )
+                if r.status_code < 300:
+                    logger.info("Updated Ollama URL to %s via API", ollama_url)
+                    return
+                # Fallback: older endpoint
+                r = await client.post(
+                    f"{api}/ollama/config/update",
+                    json={"url": ollama_url, "enable": True},
+                    timeout=5,
+                )
+                if r.status_code < 300:
+                    logger.info("Updated Ollama URL to %s via legacy API", ollama_url)
+                    return
+                logger.debug("Ollama URL API update returned %d — will take effect on next restart", r.status_code)
+            except Exception as e:
+                logger.debug("Could not update Ollama URL via API: %s", e)
 
     # ── Health checking ──────────────────────────────────────
 

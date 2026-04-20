@@ -109,13 +109,14 @@ class DeploymentOrchestrator:
         # schedule broadcasts back on to the main event loop.
         loop = asyncio.get_running_loop()
 
-        def _provision_progress(step: str, current: int, total: int, msg: str) -> None:
+        def _provision_progress(step: str, status: str, current: int, total: int, msg: str) -> None:
             asyncio.run_coroutine_threadsafe(
                 ws_manager.broadcast(
                     deployment_id,
                     {
                         "type": "provision_progress",
                         "step": step,
+                        "status": status,
                         "current": current,
                         "total": total,
                         "message": msg,
@@ -153,7 +154,8 @@ class DeploymentOrchestrator:
             )
             return
 
-        # Update service endpoints now that we have the IP
+        # Build service endpoints: SSH is always available;
+        # Ollama is only reachable via SSH tunnel (set later when chat opens)
         endpoints = provider.get_service_endpoints(record.config, result.public_ip)
         self.store.update_endpoints(deployment_id, endpoints)
 
@@ -177,13 +179,14 @@ class DeploymentOrchestrator:
 
         ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
 
-        def _setup_progress(step: str, current: int, total: int, msg: str) -> None:
+        def _setup_progress(step: str, status: str, current: int, total: int, msg: str) -> None:
             asyncio.run_coroutine_threadsafe(
                 ws_manager.broadcast(
                     deployment_id,
                     {
                         "type": "setup_progress",
                         "step": step,
+                        "status": status,
                         "current": current,
                         "total": total,
                         "message": msg,

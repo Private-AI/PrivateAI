@@ -1,11 +1,12 @@
 """Remote VM software setup via SSH — Azure implementation.
 
-Refactored from the original ``azure_setup.vm_setup`` module.
-Installs NVIDIA drivers, Ollama, and pulls models.
+Installs NVIDIA drivers, Ollama, and pulls models over SSH.
+Also provides live model management helpers (list / pull / delete).
 """
 
 from __future__ import annotations
 
+import json
 import logging
 import re
 import time
@@ -19,18 +20,19 @@ from app.providers.base import SetupResult
 
 logger = logging.getLogger(__name__)
 
-# Allowed characters in an Ollama model tag.
 _MODEL_TAG_RE = re.compile(r"^[a-zA-Z0-9._:/-]+$")
 
-# Step definitions for VM setup
 SETUP_STEPS = [
     ("connect", "Connecting via SSH"),
     ("update_system", "Updating system packages"),
-    ("mount_disk", "Mounting data disk at /models"),
+    ("mount_disk", "Mounting model storage"),
     ("nvidia_driver", "Installing NVIDIA driver"),
     ("install_ollama", "Installing and configuring Ollama"),
     ("pull_models", "Pulling AI models"),
 ]
+
+
+# ── SSH helpers ───────────────────────────────────────────────────────
 
 
 def _run_ssh(
@@ -52,31 +54,73 @@ def _make_step(step_id: str, label: str, status: str = "pending") -> StepProgres
     return StepProgress(step=step_id, label=label, status=status)
 
 
+def _ssh_connect(
+    ip: str,
+    username: str,
+    ssh_key_path: str,
+    retries: int = 12,
+    delay: float = 5.0,
+) -> paramiko.SSHClient | None:
+    """Try to connect via SSH up to ``retries`` times. Returns client or None."""
+    from pathlib import Path
+
+    key_path = Path(ssh_key_path).expanduser()
+    if key_path.suffix == ".pub":
+        key_path = key_path.with_suffix("")
+    if not key_path.exists():
+        logger.error("SSH private key not found: %s", key_path)
+        return None
+
+    try:
+        pkey: Any = paramiko.Ed25519Key.from_private_key_file(str(key_path))
+    except paramiko.SSHException:
+        pkey = paramiko.RSAKey.from_private_key_file(str(key_path))
+
+    client = paramiko.SSHClient()
+    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+
+    for attempt in range(retries):
+        try:
+            client.connect(
+                hostname=ip,
+                username=username,
+                pkey=pkey,
+                timeout=10,
+                look_for_keys=False,
+                allow_agent=False,
+            )
+            return client
+        except Exception:
+            if attempt < retries - 1:
+                time.sleep(delay)
+
+    client.close()
+    return None
+
+
+# ── Main setup function ───────────────────────────────────────────────
+
+
 def setup_vm_remote(
     *,
     ip: str,
     username: str = "azureuser",
     ssh_key_path: str = "~/.ssh/id_ed25519",
     models: list[str] | None = None,
+    has_data_disk: bool = True,
+    has_gpu: bool = False,
     progress_callback: Any | None = None,
 ) -> SetupResult:
-    """Install NVIDIA drivers, Ollama, and pull models.
-
-    This is a synchronous function — the provider wraps it in
-    ``asyncio.to_thread()``.
+    """Install NVIDIA drivers, Ollama, and pull models over SSH.
 
     Args:
-        ip: Public IP address of the VM.
-        username: SSH username.
-        ssh_key_path: Path to the SSH *private* key.
+        ip: Public IP of the VM.
+        username: SSH user.
+        ssh_key_path: Path to SSH private key.
         models: Ollama model tags to pull.
+        has_data_disk: Whether a separate data disk was attached.
         progress_callback: Optional ``(step, current, total, msg)`` callback.
-
-    Returns:
-        SetupResult with status and installed models.
     """
-    from pathlib import Path
-
     if models is None:
         models = ["gemma3:4b"]
 
@@ -93,95 +137,62 @@ def setup_vm_remote(
             steps[idx].completed_at = now
         steps[idx].detail = detail
         if progress_callback:
-            progress_callback(steps[idx].step, idx + 1, total, detail)
+            progress_callback(steps[idx].step, status, idx + 1, total, detail)
 
-    key_path = Path(ssh_key_path).expanduser()
-    if key_path.suffix == ".pub":
-        key_path = key_path.with_suffix("")
-    if not key_path.exists():
-        alt = key_path.with_suffix("")
-        if alt.exists():
-            key_path = alt
-        else:
-            result.error = f"SSH private key not found: {key_path}"
-            return result
-
-    client = paramiko.SSHClient()
-    client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+    # ── 1. Connect ───────────────────────────────────────────
+    _progress(0, "in_progress")
+    client = _ssh_connect(ip, username, ssh_key_path)
+    if not client:
+        result.error = f"Could not connect to {ip} after 60 seconds"
+        _progress(0, "failed", result.error)
+        return result
+    _progress(0, "completed", f"connected to {username}@{ip}")
 
     try:
-        # ── 1. Connect ───────────────────────────────────────
-        _progress(0, "in_progress")
-        pkey = paramiko.Ed25519Key.from_private_key_file(str(key_path))
-        connected = False
-        for attempt in range(12):
-            try:
-                client.connect(
-                    hostname=ip,
-                    username=username,
-                    pkey=pkey,
-                    timeout=10,
-                    look_for_keys=False,
-                    allow_agent=False,
-                )
-                connected = True
-                break
-            except Exception:
-                if attempt < 11:
-                    time.sleep(5)
-        if not connected:
-            result.error = f"Could not connect to {ip} after 60 seconds"
-            _progress(0, "failed", result.error)
-            return result
-        _progress(0, "completed", f"connected to {username}@{ip}")
-
         # ── 2. Update system ─────────────────────────────────
         _progress(1, "in_progress")
-        exit_code, stdout, stderr = _run_ssh(
+        ec, out, err = _run_ssh(
             client,
             "sudo apt-get update -qq && sudo apt-get upgrade -y -qq",
             timeout=600,
         )
-        if exit_code != 0:
-            result.error = f"System update failed: {stderr[:500]}"
+        if ec != 0:
+            detail = err.strip() or out.strip()
+            logger.error("apt upgrade stdout: %s", out[-500:])
+            logger.error("apt upgrade stderr: %s", err[-500:])
+            result.error = f"System update failed: {detail[-400:]}"
             _progress(1, "failed", result.error)
             return result
         _progress(1, "completed")
 
-        # ── 3. Mount data disk ───────────────────────────────
+        # ── 3. Mount / prepare model storage ─────────────────
         _progress(2, "in_progress")
-        mount_script = r"""
+        if has_data_disk:
+            mount_script = r"""
 set -euo pipefail
 if mountpoint -q /models 2>/dev/null; then
     echo "ALREADY_MOUNTED"
     exit 0
 fi
-
 DATA_DISK=""
 for dev in $(lsblk -dno NAME,HCTL 2>/dev/null | awk '$2 ~ /^1:/ {print "/dev/"$1}'); do
     if [ -b "$dev" ] && ! lsblk -n "$dev" | grep -q part; then
-        DATA_DISK="$dev"
-        break
+        DATA_DISK="$dev"; break
     fi
 done
-
 if [ -z "$DATA_DISK" ]; then
     for disk in /dev/sd{b,c,d,e}; do
-        if [ -b "$disk" ] \
-            && ! lsblk -n "$disk" | grep -q part \
+        if [ -b "$disk" ] && ! lsblk -n "$disk" | grep -q part \
             && ! lsblk -n -o MOUNTPOINT "$disk" | grep -q '/'; then
-            DATA_DISK="$disk"
-            break
+            DATA_DISK="$disk"; break
         fi
     done
 fi
-
 if [ -z "$DATA_DISK" ]; then
     echo "NO_DISK_FOUND"
     sudo mkdir -p /models
     exit 0
 fi
-
 echo "FORMATTING=$DATA_DISK"
 sudo parted "$DATA_DISK" --script mklabel gpt
 sudo parted "$DATA_DISK" --script mkpart primary ext4 0% 100%
@@ -194,38 +205,50 @@ UUID=$(sudo blkid -s UUID -o value "$PART")
 echo "UUID=$UUID /models ext4 defaults,nofail 0 2" | sudo tee -a /etc/fstab
 echo "MOUNTED=$PART"
 """
-        exit_code, stdout, stderr = _run_ssh(client, mount_script, timeout=120)
-        if exit_code != 0:
-            result.error = f"Disk mount failed: {stderr[:500]}"
+            ec, out, err = _run_ssh(client, mount_script, timeout=120)
+            if ec != 0:
+                result.error = f"Disk mount failed: {err[:500]}"
+                _progress(2, "failed", result.error)
+                return result
+            mount_info = out.strip().split("\n")[-1]
+            _progress(2, "completed", mount_info)
+        else:
+            # No separate data disk — use a directory on the OS disk
+            ec, _, err = _run_ssh(client, "sudo mkdir -p /models", timeout=30)
+            if ec != 0:
+                result.error = f"Failed to create /models directory: {err[:300]}"
+                _progress(2, "failed", result.error)
+                return result
+            _progress(2, "completed", "using OS disk for model storage")
+
+        ec, _, err = _run_ssh(
+            client,
+            "sudo mkdir -p /models/ollama",
+            timeout=30,
+        )
+        if ec != 0:
+            result.error = f"Failed to prepare model storage: {err[:300]}"
             _progress(2, "failed", result.error)
             return result
 
-        _run_ssh(
-            client,
-            f"sudo mkdir -p /models/ollama && sudo chown -R '{username}' /models/ollama",
-        )
-        mount_info = stdout.strip().split("\n")[-1]
-        _progress(2, "completed", mount_info)
-
-        # ── 4. NVIDIA driver ─────────────────────────────────
+        # ── 4. NVIDIA driver ──────────────────────────────────
         _progress(3, "in_progress")
-        nvidia_script = r"""
+        if not has_gpu:
+            _progress(3, "completed", "skipped (CPU-only VM)")
+        else:
+            nvidia_script = r"""
 set -euo pipefail
 if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
     echo "DRIVER_OK"
     nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
     exit 0
 fi
-
 sudo apt-get install -y ubuntu-drivers-common
 sudo ubuntu-drivers install --gpgpu || true
-
 if ! dpkg -l | grep -q nvidia-driver; then
     sudo apt-get install -y nvidia-driver-535-server || true
 fi
-
 sudo modprobe nvidia 2>/dev/null || true
-
 if nvidia-smi &>/dev/null; then
     echo "DRIVER_INSTALLED"
     nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv,noheader
@@ -234,88 +257,78 @@ else
     exit 100
 fi
 """
-        exit_code, stdout, stderr = _run_ssh(client, nvidia_script, timeout=600)
+            ec, out, err = _run_ssh(client, nvidia_script, timeout=600)
 
-        if exit_code == 100 or "REBOOT_REQUIRED" in stdout:
-            result.reboot_required = True
-            result.error = "VM needs a reboot for NVIDIA drivers. Reboot and re-run setup."
-            _progress(3, "failed", "reboot required")
-            return result
-        elif exit_code != 0:
-            _progress(3, "completed", "skipped (no GPU detected)")
-        else:
-            gpu_lines = [
-                line for line in stdout.strip().split("\n") if line and "DRIVER" not in line
-            ]
-            result.gpu_info = "; ".join(gpu_lines)
-            _progress(3, "completed", result.gpu_info)
+            if ec == 100 or "REBOOT_REQUIRED" in out:
+                result.reboot_required = True
+                result.error = "VM needs a reboot for NVIDIA drivers. Reboot and re-run setup."
+                _progress(3, "failed", "reboot required")
+                return result
+            elif ec != 0:
+                _progress(3, "completed", "skipped (no GPU detected)")
+            else:
+                gpu_lines = [ln for ln in out.strip().split("\n") if ln and "DRIVER" not in ln]
+                result.gpu_info = "; ".join(gpu_lines)
+                _progress(3, "completed", result.gpu_info or "GPU ready")
 
-        # ── 5. Install Ollama ────────────────────────────────
+        # ── 5. Install Ollama ─────────────────────────────────
         _progress(4, "in_progress")
         ollama_script = r"""
-set -euo pipefail
 if ! command -v ollama &>/dev/null; then
-    curl -fsSL https://ollama.com/install.sh | sh
+    curl -fsSL https://ollama.com/install.sh | sh 2>&1
 fi
-
 sudo mkdir -p /etc/systemd/system/ollama.service.d
 cat << 'SVCCONF' | sudo tee /etc/systemd/system/ollama.service.d/override.conf > /dev/null
 [Service]
 Environment="OLLAMA_MODELS=/models/ollama"
-Environment="OLLAMA_HOST=0.0.0.0:11434"
+Environment="OLLAMA_HOST=127.0.0.1:11434"
 SVCCONF
-
+sudo mkdir -p /models/ollama
+sudo chown -R ollama:ollama /models/ollama
 sudo systemctl daemon-reload
 sudo systemctl enable ollama
 sudo systemctl restart ollama
-
-for i in $(seq 1 30); do
-    if curl -sf http://localhost:11434/api/tags &>/dev/null; then
+for i in $(seq 1 60); do
+    if curl -sf http://127.0.0.1:11434/api/tags >/dev/null 2>&1; then
         echo "OLLAMA_READY"
         ollama --version 2>/dev/null || echo "version unknown"
         exit 0
     fi
-    sleep 1
+    sleep 2
 done
 echo "OLLAMA_TIMEOUT"
 exit 1
 """
-        exit_code, stdout, stderr = _run_ssh(client, ollama_script, timeout=300)
-        if exit_code != 0:
-            result.error = f"Ollama install failed: {stderr[:500]}"
+        ec, out, err = _run_ssh(client, ollama_script, timeout=600)
+        if ec != 0:
+            detail = err.strip() or out.strip()
+            logger.error("Ollama install stdout: %s", out[-1000:])
+            logger.error("Ollama install stderr: %s", err[-500:])
+            result.error = f"Ollama install failed: {detail[-400:]}"
             _progress(4, "failed", result.error)
             return result
         _progress(4, "completed")
 
-        # ── 6. Pull models ───────────────────────────────────
+        # ── 6. Pull models ────────────────────────────────────
         _progress(5, "in_progress", f"{len(models)} model(s)")
         for model in models:
             if not _MODEL_TAG_RE.match(model):
                 logger.warning("Skipping invalid model tag: %s", model)
                 continue
-            exit_code, stdout, stderr = _run_ssh(
+            ec, _, err = _run_ssh(
                 client,
                 f"OLLAMA_MODELS=/models/ollama ollama pull '{model}'",
                 timeout=1800,
             )
-            if exit_code == 0:
+            if ec == 0:
                 result.models_installed.append(model)
             else:
-                logger.warning("Failed to pull model %s: %s", model, stderr[:200])
+                logger.warning("Failed to pull model %s: %s", model, err[:200])
 
-        _progress(
-            5,
-            "completed",
-            f"{len(result.models_installed)}/{len(models)} pulled",
-        )
+        _progress(5, "completed", f"{len(result.models_installed)}/{len(models)} pulled")
 
-        # ── Done ─────────────────────────────────────────────
         result.success = True
-        logger.info(
-            "VM setup complete: gpu=%s models=%s",
-            result.gpu_info,
-            result.models_installed,
-        )
+        logger.info("VM setup complete: gpu=%s models=%s", result.gpu_info, result.models_installed)
         return result
 
     except Exception as e:
@@ -323,5 +336,86 @@ exit 1
         logger.error("VM setup failed: %s", e, exc_info=True)
         return result
 
+    finally:
+        client.close()
+
+
+# ── Live model management ─────────────────────────────────────────────
+
+
+def list_models_remote(
+    *,
+    ip: str,
+    username: str = "azureuser",
+    ssh_key_path: str = "~/.ssh/id_ed25519",
+) -> list[dict[str, Any]]:
+    """Return installed Ollama models via SSH."""
+    client = _ssh_connect(ip, username, ssh_key_path, retries=3, delay=2.0)
+    if not client:
+        raise RuntimeError(f"Cannot connect to {ip}")
+    try:
+        ec, out, err = _run_ssh(
+            client,
+            "curl -sf http://127.0.0.1:11434/api/tags",
+            timeout=15,
+        )
+        if ec != 0:
+            raise RuntimeError(f"Ollama not responding: {err[:200]}")
+        data = json.loads(out)
+        return data.get("models", [])
+    finally:
+        client.close()
+
+
+def pull_model_remote(
+    *,
+    ip: str,
+    username: str = "azureuser",
+    ssh_key_path: str = "~/.ssh/id_ed25519",
+    model: str,
+) -> dict[str, Any]:
+    """Pull an Ollama model on the VM via SSH."""
+    if not _MODEL_TAG_RE.match(model):
+        raise ValueError(f"Invalid model tag: {model!r}")
+
+    client = _ssh_connect(ip, username, ssh_key_path, retries=3, delay=2.0)
+    if not client:
+        raise RuntimeError(f"Cannot connect to {ip}")
+    try:
+        ec, out, err = _run_ssh(
+            client,
+            f"OLLAMA_MODELS=/models/ollama ollama pull '{model}'",
+            timeout=1800,
+        )
+        if ec != 0:
+            return {"success": False, "model": model, "error": err[:500]}
+        return {"success": True, "model": model}
+    finally:
+        client.close()
+
+
+def delete_model_remote(
+    *,
+    ip: str,
+    username: str = "azureuser",
+    ssh_key_path: str = "~/.ssh/id_ed25519",
+    model: str,
+) -> dict[str, Any]:
+    """Delete an Ollama model from the VM via SSH."""
+    if not _MODEL_TAG_RE.match(model):
+        raise ValueError(f"Invalid model tag: {model!r}")
+
+    client = _ssh_connect(ip, username, ssh_key_path, retries=3, delay=2.0)
+    if not client:
+        raise RuntimeError(f"Cannot connect to {ip}")
+    try:
+        ec, out, err = _run_ssh(
+            client,
+            f"OLLAMA_MODELS=/models/ollama ollama rm '{model}'",
+            timeout=60,
+        )
+        if ec != 0:
+            return {"success": False, "model": model, "error": err[:500]}
+        return {"success": True, "model": model}
     finally:
         client.close()

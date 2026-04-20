@@ -25,6 +25,7 @@ from app.providers.azure.config import (
     AZURE_VM_PROFILES,
     build_azure_params,
     parse_image_reference,
+    recommend_vm_for_model,
 )
 from app.providers.azure.provider import AzureProvider
 
@@ -33,21 +34,19 @@ from app.providers.azure.provider import AzureProvider
 class TestAzureConfigTranslation:
     """Test that DeploymentConfig translates correctly to Azure params."""
 
-    def test_confidential_vm_params(self, production_config: DeploymentConfig) -> None:
-        """Confidential security level should produce ConfidentialVM params."""
+    def test_always_trusted_launch(self, production_config: DeploymentConfig) -> None:
+        """All VMs now use TrustedLaunch — no ConfidentialVM."""
         params = build_azure_params(production_config)
-        assert params["security_type"] == "ConfidentialVM"
-        assert params["secure_boot"] is True
-        assert params["vtpm"] is True
-        assert params["disk_encryption"] == "VMGuestStateOnly"
-        assert "confidential" in params["image"]
+        assert params["security_type"] == "TrustedLaunch"
+        assert params["disk_encryption"] == ""
+        assert params["image"] == "ubuntu-22.04"
 
     def test_standard_vm_params(self, test_config: DeploymentConfig) -> None:
         """Standard security level should produce TrustedLaunch params."""
         params = build_azure_params(test_config)
         assert params["security_type"] == "TrustedLaunch"
         assert params["disk_encryption"] == ""
-        assert "ubuntu-22.04" == params["image"]
+        assert params["image"] == "ubuntu-22.04"
 
     def test_location_propagates(self, production_config: DeploymentConfig) -> None:
         params = build_azure_params(production_config)
@@ -82,56 +81,51 @@ class TestAzureConfigTranslation:
         assert params["os_disk_type"] == "Standard_LRS"
         assert params["data_disk_type"] == "Standard_LRS"
 
-    def test_production_uses_premium_disks(self, production_config: DeploymentConfig) -> None:
-        params = build_azure_params(production_config)
+    def test_gpu_vm_uses_premium_disks(self) -> None:
+        config = DeploymentConfig(
+            provider="azure", region="eastus", vm_size="Standard_NC4as_T4_v3"
+        )
+        params = build_azure_params(config)
         assert params["os_disk_type"] == "Premium_LRS"
         assert params["data_disk_type"] == "Premium_LRS"
 
-    def test_nsg_sources_from_allowed_ips(self) -> None:
+    def test_nsg_ssh_source_from_allowed_ips(self) -> None:
         config = DeploymentConfig(
             provider="azure",
             region="eastus",
             vm_size="Standard_D2s_v5",
             allowed_ssh_sources=["1.2.3.4/32"],
-            allowed_api_sources=["5.6.7.8/32"],
         )
         params = build_azure_params(config)
         assert params["nsg_ssh_source"] == "1.2.3.4/32"
-        assert params["nsg_ollama_source"] == "5.6.7.8/32"
 
-    def test_disk_encryption_override(self) -> None:
+    def test_no_ollama_nsg_source(self) -> None:
+        """Ollama port is never exposed in the NSG — only SSH (tunnel)."""
         config = DeploymentConfig(
             provider="azure",
             region="eastus",
-            vm_size="Standard_NCC40ads_H100_v5",
-            security_level=SecurityLevel.CONFIDENTIAL,
-            provider_options={"disk_encryption": "DiskWithVMGuestState"},
+            vm_size="Standard_D2s_v5",
         )
         params = build_azure_params(config)
-        assert params["disk_encryption"] == "DiskWithVMGuestState"
+        assert "nsg_ollama_source" not in params
 
 
 @pytest.mark.phase2
 class TestImageParsing:
     """Test image URN parsing logic."""
 
-    def test_parse_confidential_alias(self) -> None:
-        ref = parse_image_reference("ubuntu-confidential-22.04")
-        assert ref["publisher"] == "Canonical"
-        assert "confidential" in ref["offer"]
-        assert ref["version"] == "latest"
-
     def test_parse_standard_alias(self) -> None:
         ref = parse_image_reference("ubuntu-22.04")
         assert ref["publisher"] == "Canonical"
         assert "server" in ref["offer"]
+        assert ref["version"] == "latest"
 
     def test_parse_full_urn(self) -> None:
-        urn = "Canonical:0001-com-ubuntu-confidential-vm-jammy:22_04-lts-cvm:latest"
+        urn = "Canonical:0001-com-ubuntu-server-jammy:22_04-lts-gen2:latest"
         ref = parse_image_reference(urn)
         assert ref["publisher"] == "Canonical"
-        assert ref["offer"] == "0001-com-ubuntu-confidential-vm-jammy"
-        assert ref["sku"] == "22_04-lts-cvm"
+        assert ref["offer"] == "0001-com-ubuntu-server-jammy"
+        assert ref["sku"] == "22_04-lts-gen2"
         assert ref["version"] == "latest"
 
     def test_invalid_image_raises(self) -> None:
@@ -146,8 +140,8 @@ class TestDeploymentConfig:
     def test_production_defaults(self, production_config: DeploymentConfig) -> None:
         assert production_config.provider == CloudProvider.AZURE
         assert production_config.region == "eastus"
-        assert production_config.security_level == SecurityLevel.CONFIDENTIAL
         assert production_config.gpu_enabled is True
+        assert production_config.security_level == SecurityLevel.STANDARD
 
     def test_test_defaults(self, test_config: DeploymentConfig) -> None:
         assert test_config.vm_size == "Standard_D2s_v5"
@@ -160,16 +154,13 @@ class TestDeploymentConfig:
 
     def test_deployment_record_creation(self, production_config: DeploymentConfig) -> None:
         record = DeploymentRecord(config=production_config)
-        assert record.id  # UUID generated
+        assert record.id
         assert record.status == DeploymentStatus.PENDING
         assert record.public_ip == ""
         assert record.error == ""
 
     def test_vm_name_validation(self) -> None:
-        """VM names must match [a-zA-Z0-9][a-zA-Z0-9-]{0,62}."""
-        # Valid
         DeploymentConfig(provider="azure", region="eastus", vm_size="x", vm_name="my-vm-1")
-        # Invalid — starts with hyphen
         with pytest.raises(Exception):
             DeploymentConfig(provider="azure", region="eastus", vm_size="x", vm_name="-invalid")
 
@@ -186,19 +177,35 @@ class TestAzureProvider:
         assert "eastus" in ids
         assert "westeurope" in ids
 
-    def test_vm_sizes(self) -> None:
+    def test_vm_sizes_contains_cheap_options(self) -> None:
         provider = AzureProvider()
         sizes = provider.list_vm_sizes("eastus")
-        assert len(sizes) >= 3
+        assert len(sizes) >= 4
         ids = [s["id"] for s in sizes]
-        assert "h100-confidential" in ids
+        assert "micro-cpu" in ids
         assert "test-no-gpu" in ids
+        assert "small-cpu" in ids
+        assert "t4-gpu" in ids
 
-    def test_service_endpoints(self, production_config: DeploymentConfig) -> None:
+    def test_vm_sizes_no_confidential(self) -> None:
+        """No confidential VMs should be in the profile list."""
+        provider = AzureProvider()
+        sizes = provider.list_vm_sizes("eastus")
+        assert all(not s["confidential"] for s in sizes)
+
+    def test_vm_sizes_ordered_by_cost(self) -> None:
+        """Cheapest VM should be first."""
+        provider = AzureProvider()
+        sizes = provider.list_vm_sizes("eastus")
+        costs = [s["cost_per_hour"] for s in sizes]
+        assert costs == sorted(costs)
+
+    def test_service_endpoints_ssh(self, production_config: DeploymentConfig) -> None:
         provider = AzureProvider()
         endpoints = provider.get_service_endpoints(production_config, "10.0.0.1")
         assert "azureuser@10.0.0.1" in endpoints.ssh
-        assert endpoints.ollama_api == "http://10.0.0.1:11434"
+        # Ollama API is empty — only reachable via SSH tunnel
+        assert endpoints.ollama_api == ""
 
     def test_service_endpoints_no_ip(self, production_config: DeploymentConfig) -> None:
         provider = AzureProvider()
@@ -219,12 +226,38 @@ class TestVMProfiles:
             assert p.vcpus > 0
             assert p.memory_gb > 0
 
-    def test_h100_is_confidential(self) -> None:
-        h100 = next(p for p in AZURE_VM_PROFILES if p.id == "h100-confidential")
-        assert h100.confidential is True
-        assert h100.gpus >= 1
+    def test_no_confidential_profiles(self) -> None:
+        """All profiles use TrustedLaunch — no TEE profiles."""
+        assert all(not p.confidential for p in AZURE_VM_PROFILES)
 
     def test_test_vm_has_no_gpu(self) -> None:
         test = next(p for p in AZURE_VM_PROFILES if p.id == "test-no-gpu")
         assert test.gpus == 0
-        assert test.confidential is False
+        assert test.cost_per_hour < 0.15
+
+    def test_micro_is_cheapest(self) -> None:
+        micro = next(p for p in AZURE_VM_PROFILES if p.id == "micro-cpu")
+        assert micro.cost_per_hour == min(p.cost_per_hour for p in AZURE_VM_PROFILES)
+
+
+@pytest.mark.phase2
+class TestVMRecommendation:
+    """Test model→VM recommendation logic."""
+
+    def test_tiny_model_gets_micro(self) -> None:
+        assert recommend_vm_for_model("tinyllama:1.1b") == "micro-cpu"
+
+    def test_small_model_gets_small_cpu(self) -> None:
+        assert recommend_vm_for_model("llama3:8b") == "small-cpu"
+
+    def test_medium_model_gets_medium_cpu(self) -> None:
+        assert recommend_vm_for_model("llama3:13b") == "medium-cpu"
+
+    def test_large_model_gets_gpu(self) -> None:
+        vm = recommend_vm_for_model("llama3:70b")
+        assert vm in ("t4-gpu", "a100-gpu")
+
+    def test_default_model_gets_reasonable_vm(self) -> None:
+        vm = recommend_vm_for_model("gemma3:4b")
+        # 4B is small → micro or small
+        assert vm in ("micro-cpu", "test-no-gpu", "small-cpu")

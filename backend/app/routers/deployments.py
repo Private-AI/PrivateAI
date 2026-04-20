@@ -13,10 +13,14 @@ from app.models.schemas import (
     AutoShutdownResponse,
     CreateDeploymentRequest,
     CreateDeploymentResponse,
+    DeleteModelResponse,
     DeploymentListResponse,
     DeploymentStatusResponse,
     ErrorResponse,
     LifecycleResponse,
+    ModelListResponse,
+    PullModelRequest,
+    PullModelResponse,
     SetupVMResponse,
     ValidationResponse,
 )
@@ -249,6 +253,103 @@ async def validate_deployment(deployment_id: str, check_gpu: bool = False):
     if "error" in result:
         raise HTTPException(404, detail=result["error"])
     return ValidationResponse(**result)
+
+
+# ── Model management ─────────────────────────────────────────────────
+
+
+@router.get(
+    "/{deployment_id}/models",
+    response_model=ModelListResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def list_models(deployment_id: str):
+    """List Ollama models installed on the VM."""
+    orchestrator = get_orchestrator()
+    record = orchestrator.store.get(deployment_id)
+    if not record or not record.public_ip:
+        raise HTTPException(404, detail="Deployment not found or no IP assigned")
+
+    ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+    from app.providers.registry import get_provider
+    from app.models.schemas import ModelInfo
+
+    provider = get_provider(record.config.provider)
+    if not hasattr(provider, "list_models"):
+        raise HTTPException(400, detail="Provider does not support model management")
+
+    try:
+        models_raw = await provider.list_models(  # type: ignore[attr-defined]
+            record.config, record.public_ip, ssh_key
+        )
+        models = [ModelInfo(**m) if isinstance(m, dict) else ModelInfo(name=str(m)) for m in models_raw]
+        return ModelListResponse(models=models)
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
+
+
+@router.post(
+    "/{deployment_id}/models",
+    response_model=PullModelResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def pull_model(deployment_id: str, request: PullModelRequest):
+    """Pull (download) a new Ollama model onto the VM."""
+    orchestrator = get_orchestrator()
+    record = orchestrator.store.get(deployment_id)
+    if not record or not record.public_ip:
+        raise HTTPException(404, detail="Deployment not found or no IP assigned")
+
+    ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+    from app.providers.registry import get_provider
+
+    provider = get_provider(record.config.provider)
+    if not hasattr(provider, "pull_model"):
+        raise HTTPException(400, detail="Provider does not support model management")
+
+    try:
+        result = await provider.pull_model(  # type: ignore[attr-defined]
+            record.config, record.public_ip, ssh_key, request.model
+        )
+        return PullModelResponse(
+            success=result.get("success", False),
+            model=request.model,
+            message=result.get("error", "") if not result.get("success") else "Model pulled successfully",
+        )
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
+
+
+@router.delete(
+    "/{deployment_id}/models/{model:path}",
+    response_model=DeleteModelResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def delete_model(deployment_id: str, model: str):
+    """Remove an Ollama model from the VM."""
+    orchestrator = get_orchestrator()
+    record = orchestrator.store.get(deployment_id)
+    if not record or not record.public_ip:
+        raise HTTPException(404, detail="Deployment not found or no IP assigned")
+
+    ssh_key = record.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+    from app.providers.registry import get_provider
+
+    provider = get_provider(record.config.provider)
+    if not hasattr(provider, "delete_model"):
+        raise HTTPException(400, detail="Provider does not support model management")
+
+    try:
+        result = await provider.delete_model(  # type: ignore[attr-defined]
+            record.config, record.public_ip, ssh_key, model
+        )
+        return DeleteModelResponse(
+            success=result.get("success", False),
+            model=model,
+            message=result.get("error", "") if not result.get("success") else "Model deleted",
+        )
+    except Exception as e:
+        raise HTTPException(502, detail=str(e))
 
 
 # ── WebSocket ────────────────────────────────────────────────────────

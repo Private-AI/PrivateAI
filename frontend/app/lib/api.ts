@@ -5,6 +5,7 @@ import type {
   CostReport,
   Deployment,
   DeploymentConfig,
+  OllamaModel,
   OpenWebuiEnvConfig,
   OpenWebuiState,
   ProviderInfo,
@@ -45,7 +46,11 @@ async function request<T>(
     let detail: string;
     try {
       const body = await res.json();
-      detail = body.detail ?? body.message ?? JSON.stringify(body);
+      if (Array.isArray(body.detail)) {
+        detail = body.detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ");
+      } else {
+        detail = body.detail ?? body.message ?? JSON.stringify(body);
+      }
     } catch {
       detail = res.statusText;
     }
@@ -74,7 +79,11 @@ async function requestRoot<T>(
     let detail: string;
     try {
       const body = await res.json();
-      detail = body.detail ?? body.message ?? JSON.stringify(body);
+      if (Array.isArray(body.detail)) {
+        detail = body.detail.map((e: { msg?: string }) => e.msg ?? JSON.stringify(e)).join("; ");
+      } else {
+        detail = body.detail ?? body.message ?? JSON.stringify(body);
+      }
     } catch {
       detail = res.statusText;
     }
@@ -294,14 +303,12 @@ export async function restartOpenWebui(
 export async function connectOpenWebuiToDeployment(
   deploymentId: string,
   deploymentName: string,
-  ollamaUrl: string,
 ): Promise<{ success: boolean; message: string; state: OpenWebuiState }> {
   return request("/open-webui/connect", {
     method: "POST",
     body: JSON.stringify({
       deployment_id: deploymentId,
       deployment_name: deploymentName,
-      ollama_url: ollamaUrl,
     }),
   });
 }
@@ -322,6 +329,61 @@ export async function updateOpenWebuiConfig(
   return request("/open-webui/config", {
     method: "PUT",
     body: JSON.stringify({ config }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Permissions setup
+// ---------------------------------------------------------------------------
+
+export function setupPermissions(
+  provider: string,
+  credentials: AzureCredentials,
+): Promise<{ success: boolean; message: string; providers: Record<string, string> }> {
+  return request(`/providers/${provider}/setup-permissions`, {
+    method: "POST",
+    body: JSON.stringify({ credentials }),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// VM recommendation
+// ---------------------------------------------------------------------------
+
+export function recommendVM(
+  provider: string,
+  model: string,
+): Promise<{ vm_profile_id: string; reason: string }> {
+  return request(`/providers/${provider}/recommend-vm?model=${encodeURIComponent(model)}`);
+}
+
+// ---------------------------------------------------------------------------
+// Model management
+// ---------------------------------------------------------------------------
+
+export async function listModels(deploymentId: string): Promise<OllamaModel[]> {
+  const data = await request<{ models: OllamaModel[] }>(
+    `/deployments/${deploymentId}/models`,
+  );
+  return data.models;
+}
+
+export function pullModel(
+  deploymentId: string,
+  model: string,
+): Promise<{ success: boolean; model: string; message: string }> {
+  return request(`/deployments/${deploymentId}/models`, {
+    method: "POST",
+    body: JSON.stringify({ model }),
+  });
+}
+
+export function deleteModel(
+  deploymentId: string,
+  model: string,
+): Promise<{ success: boolean; model: string; message: string }> {
+  return request(`/deployments/${deploymentId}/models/${encodeURIComponent(model)}`, {
+    method: "DELETE",
   });
 }
 
