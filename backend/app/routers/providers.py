@@ -15,6 +15,7 @@ from app.models.schemas import (
     ValidateCredentialsResponse,
 )
 from app.providers.registry import get_provider, list_providers
+from app.services.deployment_store import get_store
 
 router = APIRouter(prefix="/api/v1/providers", tags=["providers"])
 
@@ -58,6 +59,8 @@ async def validate_credentials(provider: str, request: ValidateCredentialsReques
         raise HTTPException(404, detail=str(e))
 
     valid, message = await p.validate_credentials(request.credentials)
+    if valid:
+        get_store().set_provider_credentials(provider, request.credentials)
     return ValidateCredentialsResponse(valid=valid, message=message)
 
 
@@ -82,6 +85,7 @@ async def setup_permissions(provider: str, request: SetupPermissionsRequest):
         raise HTTPException(400, detail=f"Provider '{provider}' does not support setup_permissions")
 
     result = await p.setup_permissions(request.credentials)  # type: ignore[attr-defined]
+    get_store().set_provider_credentials(provider, request.credentials)
     return SetupPermissionsResponse(**result)
 
 

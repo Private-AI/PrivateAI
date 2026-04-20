@@ -3,10 +3,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import {
+  IconAlert,
   IconChat,
   IconCopy,
-  IconExternalLink,
-  IconGlobe,
   IconLoader,
   IconPlay,
   IconPlus,
@@ -27,6 +26,7 @@ import {
   connectOpenWebuiToDeployment,
   deleteModel,
   destroyDeployment,
+  destroyManagedResources,
   fetchDeploymentLive,
   fetchDeployments,
   fetchOpenWebuiStatus,
@@ -36,11 +36,13 @@ import {
   stopDeployment,
 } from "@/app/lib/api";
 import {
+  getSettings,
   getDeploymentHistory,
   removeDeploymentFromHistory,
   updateDeploymentInHistory,
 } from "@/app/lib/storage";
 import type {
+  AzureCredentials,
   Deployment,
   DeploymentStatus,
   OllamaModel,
@@ -648,6 +650,11 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [connectedDeploymentId, setConnectedDeploymentId] = useState("");
+  const [bulkDestroyLoading, setBulkDestroyLoading] = useState(false);
+  const [bulkDestroyFeedback, setBulkDestroyFeedback] = useState<{
+    tone: "success" | "error";
+    message: string;
+  } | null>(null);
 
   // Cost monitoring
   const {
@@ -849,16 +856,73 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     async (id: string) => {
       setActionFor(id, "destroy");
       try {
-        await destroyDeployment(id);
-        removeDeploymentFromHistory(id);
-        setDeployments((prev) => prev.filter((d) => d.id !== id));
+        const settings = getSettings();
+        const credentials: AzureCredentials | undefined =
+          settings.savedCredentials?.provider === "azure"
+            ? settings.savedCredentials
+            : undefined;
+        const result = await destroyDeployment(id, credentials);
+
+        if (result.success && result.status === "destroyed") {
+          removeDeploymentFromHistory(id);
+          setDeployments((prev) => prev.filter((d) => d.id !== id));
+          return;
+        }
+
+        setDeployments((prev) =>
+          prev.map((d) =>
+            d.id === id
+              ? { ...d, status: result.status as DeploymentStatus, error: result.message }
+              : d,
+          ),
+        );
+        updateDeploymentInHistory(id, { status: result.status as DeploymentStatus });
       } catch {
         // Keep current state
+      } finally {
         setActionFor(id, null);
       }
     },
     [setActionFor],
   );
+
+  const handleDestroyAllManagedResources = useCallback(async () => {
+    const confirmed = window.confirm(
+      "Destroy all Azure resource groups created by PrivateAI in this subscription? This only targets groups tagged as managed by PrivateAI.",
+    );
+    if (!confirmed) return;
+
+    setBulkDestroyLoading(true);
+    setBulkDestroyFeedback(null);
+    try {
+      const settings = getSettings();
+      const credentials: AzureCredentials | undefined =
+        settings.savedCredentials?.provider === "azure"
+          ? settings.savedCredentials
+          : undefined;
+      const result = await destroyManagedResources("azure", credentials);
+
+      for (const deploymentId of result.removed_deployment_ids) {
+        removeDeploymentFromHistory(deploymentId);
+      }
+
+      setDeployments((prev) =>
+        prev.filter((deployment) => !result.removed_deployment_ids.includes(deployment.id)),
+      );
+      setBulkDestroyFeedback({
+        tone: result.success ? "success" : "error",
+        message: result.message,
+      });
+      await loadData();
+    } catch (err) {
+      setBulkDestroyFeedback({
+        tone: "error",
+        message: err instanceof Error ? err.message : "Bulk destroy failed",
+      });
+    } finally {
+      setBulkDestroyLoading(false);
+    }
+  }, [loadData]);
 
   // -----------------------------------------------------------------------
   // Render
@@ -871,15 +935,46 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       {/* Header */}
       <div className="flex items-center justify-between">
         <h1 className="text-xl font-semibold text-[var(--fg)]">Deployments</h1>
-        <button
-          type="button"
-          className="btn btn-primary"
-          onClick={() => onNavigate("provision")}
-        >
-          <IconPlus size={16} />
-          New Deployment
-        </button>
+        <div className="flex items-center gap-3">
+          <button
+            type="button"
+            className="btn btn-danger"
+            onClick={handleDestroyAllManagedResources}
+            disabled={bulkDestroyLoading}
+          >
+            {bulkDestroyLoading ? <IconLoader size={16} /> : <IconAlert size={16} />}
+            Destroy All Managed Azure Resources
+          </button>
+          <button
+            type="button"
+            className="btn btn-primary"
+            onClick={() => onNavigate("provision")}
+          >
+            <IconPlus size={16} />
+            New Deployment
+          </button>
+        </div>
       </div>
+
+      {bulkDestroyFeedback && (
+        <div
+          className={
+            bulkDestroyFeedback.tone === "success"
+              ? "card border-[var(--success)] bg-[var(--success-subtle)] p-3"
+              : "card border-[var(--error)] bg-[var(--error-subtle)] p-3"
+          }
+        >
+          <p
+            className={
+              bulkDestroyFeedback.tone === "success"
+                ? "text-sm text-[var(--success)]"
+                : "text-sm text-[var(--error)]"
+            }
+          >
+            {bulkDestroyFeedback.message}
+          </p>
+        </div>
+      )}
 
       {/* Cost monitoring bar */}
       <CostSummaryBar

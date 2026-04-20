@@ -16,6 +16,9 @@ from app.models.schemas import (
     DeleteModelResponse,
     DeploymentListResponse,
     DeploymentStatusResponse,
+    DestroyDeploymentRequest,
+    DestroyManagedResourcesRequest,
+    DestroyManagedResourcesResponse,
     ErrorResponse,
     LifecycleResponse,
     ModelListResponse,
@@ -124,6 +127,50 @@ async def get_deployment_live(deployment_id: str):
 
 
 @router.post(
+    "/destroy-managed-resources",
+    response_model=DestroyManagedResourcesResponse,
+    responses={400: {"model": ErrorResponse}},
+)
+async def destroy_managed_resources(request: DestroyManagedResourcesRequest):
+    """Destroy all PrivateAI-managed resource groups for a provider."""
+    orchestrator = get_orchestrator()
+    try:
+        result = await orchestrator.destroy_managed_resources(
+            request.provider,
+            request.credentials,
+        )
+    except NotImplementedError as e:
+        raise HTTPException(400, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(400, detail=str(e))
+
+    matched = result.get("matched_resource_groups", [])
+    deleted = result.get("deleted_resource_groups", [])
+    failed = result.get("failed_resource_groups", [])
+    removed = result.get("removed_deployment_ids", [])
+    success = len(failed) == 0
+    if not matched:
+        message = "No PrivateAI-managed resource groups found."
+    elif success:
+        message = f"Destroyed {len(deleted)} managed resource group(s)."
+    else:
+        message = (
+            f"Destroyed {len(deleted)} managed resource group(s); "
+            f"{len(failed)} failed."
+        )
+
+    return DestroyManagedResourcesResponse(
+        success=success,
+        provider=request.provider,
+        message=message,
+        matched_resource_groups=matched,
+        deleted_resource_groups=deleted,
+        failed_resource_groups=failed,
+        removed_deployment_ids=removed,
+    )
+
+
+@router.post(
     "/{deployment_id}/start",
     response_model=LifecycleResponse,
     responses={404: {"model": ErrorResponse}},
@@ -195,7 +242,10 @@ async def set_auto_shutdown(deployment_id: str, request: AutoShutdownRequest):
     response_model=LifecycleResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def destroy_deployment(deployment_id: str):
+async def destroy_deployment(
+    deployment_id: str,
+    request: DestroyDeploymentRequest | None = None,
+):
     """Destroy all cloud resources for this deployment.
 
     This permanently deletes the resource group and everything in it.
@@ -205,12 +255,25 @@ async def destroy_deployment(deployment_id: str):
     if not record:
         raise HTTPException(404, detail="Deployment not found")
 
+    if request and request.credentials:
+        if request.credentials.provider != record.config.provider:
+            raise HTTPException(
+                400,
+                detail="Credential provider does not match deployment provider",
+            )
+        orchestrator.store.update_credentials(deployment_id, request.credentials)
+
     success = await orchestrator.destroy_deployment(deployment_id)
     updated = orchestrator.store.get(deployment_id)
+    message = (
+        "Resources destroyed"
+        if success
+        else (updated.error if updated and updated.error else "Destroy failed")
+    )
     return LifecycleResponse(
         success=success,
         status=updated.status if updated else record.status,
-        message="Resources destroyed" if success else "Destroy failed",
+        message=message,
     )
 
 

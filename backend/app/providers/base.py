@@ -220,6 +220,14 @@ class CloudProvider(abc.ABC):
         Returns ``True`` if deletion was initiated.
         """
 
+    async def destroy_managed_resources(self, credentials: Credentials) -> dict[str, Any]:
+        """Delete provider-managed resources created by this app.
+
+        Providers can override this to offer a cleanup action for orphaned
+        resources that are no longer tied cleanly to a deployment record.
+        """
+        raise NotImplementedError("Bulk destroy not supported by this provider")
+
     # ── Validation ───────────────────────────────────────────
 
     @abc.abstractmethod

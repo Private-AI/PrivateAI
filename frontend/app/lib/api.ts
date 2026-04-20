@@ -183,8 +183,32 @@ export function stopDeployment(
 
 export function destroyDeployment(
   id: string,
+  credentials?: AzureCredentials,
 ): Promise<{ success: boolean; status: string; message: string }> {
-  return request(`/deployments/${id}`, { method: "DELETE" });
+  return request(`/deployments/${id}`, {
+    method: "DELETE",
+    body: credentials ? JSON.stringify({ credentials }) : undefined,
+  });
+}
+
+export function destroyManagedResources(
+  provider: "azure",
+  credentials?: AzureCredentials,
+): Promise<{
+  success: boolean;
+  provider: string;
+  message: string;
+  matched_resource_groups: string[];
+  deleted_resource_groups: string[];
+  failed_resource_groups: string[];
+  removed_deployment_ids: string[];
+}> {
+  return request("/deployments/destroy-managed-resources", {
+    method: "POST",
+    body: JSON.stringify(
+      credentials ? { provider, credentials } : { provider },
+    ),
+  });
 }
 
 // ---------------------------------------------------------------------------

@@ -13,6 +13,9 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from pydantic import TypeAdapter
+
+from app.models.credentials import Credentials
 from app.models.deployment import (
     DeploymentConfig,
     DeploymentRecord,
@@ -25,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 _store_instance: DeploymentStore | None = None
 _store_lock = threading.Lock()
+_credentials_adapter = TypeAdapter(Credentials)
 
 # Stored in the same volume as Open WebUI data so it survives restarts
 _DEFAULT_PERSIST_PATH = Path(
@@ -38,6 +42,7 @@ class DeploymentStore:
     def __init__(self, persist_path: Path = _DEFAULT_PERSIST_PATH) -> None:
         self._records: dict[str, DeploymentRecord] = {}
         self._credentials: dict[str, Any] = {}
+        self._provider_credentials: dict[str, Any] = {}
         self._lock = threading.Lock()
         self._persist_path = persist_path
         self._load()
@@ -54,12 +59,22 @@ class DeploymentStore:
                     record = DeploymentRecord.model_validate(entry["record"])
                     self._records[record.id] = record
                     if entry.get("credentials"):
-                        from app.models.credentials import AzureCredentials
-                        self._credentials[record.id] = AzureCredentials.model_validate(
+                        self._credentials[record.id] = _credentials_adapter.validate_python(
                             entry["credentials"]
                         )
                 except Exception as e:
                     logger.warning("Skipping corrupt deployment record: %s", e)
+            for provider_name, raw_credentials in data.get("provider_credentials", {}).items():
+                try:
+                    self._provider_credentials[provider_name] = _credentials_adapter.validate_python(
+                        raw_credentials
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "Skipping corrupt provider credentials for %s: %s",
+                        provider_name,
+                        e,
+                    )
             logger.info("Loaded %d deployment(s) from %s", len(self._records), self._persist_path)
         except Exception as e:
             logger.warning("Could not load deployment store: %s", e)
@@ -74,7 +89,20 @@ class DeploymentStore:
                     "record": record.model_dump(mode="json"),
                     "credentials": cred.model_dump(mode="json") if hasattr(cred, "model_dump") else None,
                 })
-            self._persist_path.write_text(json.dumps({"records": entries}, indent=2))
+            provider_credentials = {
+                provider_name: credentials.model_dump(mode="json")
+                for provider_name, credentials in self._provider_credentials.items()
+                if hasattr(credentials, "model_dump")
+            }
+            self._persist_path.write_text(
+                json.dumps(
+                    {
+                        "records": entries,
+                        "provider_credentials": provider_credentials,
+                    },
+                    indent=2,
+                )
+            )
         except Exception as e:
             logger.warning("Could not persist deployment store: %s", e)
 
@@ -95,6 +123,23 @@ class DeploymentStore:
     def get_credentials(self, deployment_id: str) -> Any | None:
         with self._lock:
             return self._credentials.get(deployment_id)
+
+    def update_credentials(self, deployment_id: str, credentials: Any) -> bool:
+        with self._lock:
+            if deployment_id not in self._records:
+                return False
+            self._credentials[deployment_id] = credentials
+            self._save()
+            return True
+
+    def get_provider_credentials(self, provider_name: str) -> Any | None:
+        with self._lock:
+            return self._provider_credentials.get(provider_name)
+
+    def set_provider_credentials(self, provider_name: str, credentials: Any) -> None:
+        with self._lock:
+            self._provider_credentials[provider_name] = credentials
+            self._save()
 
     def list_all(self) -> list[DeploymentRecord]:
         with self._lock:

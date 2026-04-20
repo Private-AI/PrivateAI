@@ -118,6 +118,37 @@ Also added `logger.error` calls logging the last 1000 chars of stdout and 500 ch
 
 **Decision:** Credentials are stored in the JSON file alongside deployment records. This is acceptable because the file lives inside the Docker volume on the local machine, and is the same trust boundary as the Open WebUI database which stores user data.
 
+### Stale Azure Credentials During Destroy / Live Status
+
+**Problem:** Azure lifecycle actions started failing with `AADSTS7000215: Invalid client secret provided` even though the current service principal secret still worked in the credential validation flow.
+
+**Root cause:** Deployment lifecycle operations (`live`, `start`, `stop`, `destroy`) were using the credentials persisted with each deployment record. Older deployments had a stale or masked short secret persisted in `deployments.json`, so delete and status polling kept authenticating with the wrong value while manual credential validation succeeded with the current secret.
+
+**Fix:**
+- `DELETE /deployments/{id}` now accepts replacement credentials and updates the stored deployment credentials before destroy.
+- Successful Azure credential validation now updates provider-level active credentials in the backend, and lifecycle/status calls prefer those fresh provider credentials over stale per-deployment ones.
+- Destroy failures now surface as real errors instead of silently leaving a deployment stuck in `destroying`.
+
+**Decision:** Keep the persisted per-deployment credentials for restart durability, but treat the most recently validated provider credentials as the source of truth for Azure lifecycle operations.
+
+---
+
+### Bulk Cleanup for Orphaned Azure Resources
+
+**Problem:** When deployment records became stale or stuck in `destroying`, the UI had no recovery path to remove all remaining Azure resources created by PrivateAI without targeting each deployment one by one.
+
+**Fix:** Added a managed bulk-destroy flow:
+- Backend endpoint: `POST /api/v1/deployments/destroy-managed-resources`
+- Dashboard button: `Destroy All Managed Azure Resources`
+
+The cleanup only targets Azure resource groups tagged with:
+- `project=privateai`
+- `created-by=privateai-backend`
+
+Matching deployment records are removed from the app state after successful deletion so the dashboard stops showing orphaned `destroying` entries.
+
+**Decision:** Scope the bulk action to tagged PrivateAI-managed Azure resource groups only. This avoids unsafe subscription-wide deletion while still giving the user a recovery path for stuck resources.
+
 ---
 
 ## SSH Tunnel & Ollama Security

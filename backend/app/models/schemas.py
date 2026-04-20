@@ -149,6 +149,32 @@ class LifecycleResponse(BaseModel):
     public_ip: str = ""
 
 
+class DestroyDeploymentRequest(BaseModel):
+    """DELETE /api/v1/deployments/{id}.
+
+    Allows the caller to replace stale stored credentials before teardown.
+    """
+
+    credentials: Credentials | None = None
+
+
+class DestroyManagedResourcesRequest(BaseModel):
+    """POST /api/v1/deployments/destroy-managed-resources."""
+
+    provider: CloudProvider = CloudProvider.AZURE
+    credentials: Credentials | None = None
+
+
+class DestroyManagedResourcesResponse(BaseModel):
+    success: bool
+    provider: CloudProvider
+    message: str
+    matched_resource_groups: list[str]
+    deleted_resource_groups: list[str]
+    failed_resource_groups: list[str]
+    removed_deployment_ids: list[str]
+
+
 # ── Auto-shutdown ────────────────────────────────────────────────────
 
 

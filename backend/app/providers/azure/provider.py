@@ -20,6 +20,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from azure.core.exceptions import ResourceNotFoundError
 from azure.identity import ClientSecretCredential, DefaultAzureCredential
 from azure.mgmt.compute import ComputeManagementClient
 from azure.mgmt.compute.models import (
@@ -823,17 +824,55 @@ class AzureProvider(CloudProviderBase):
             resource_client = ResourceManagementClient(credential, subscription_id)
             try:
                 resource_client.resource_groups.get(config.resource_group)
-            except Exception:
-                return False
+            except ResourceNotFoundError:
+                return True
             try:
                 resource_client.resource_groups.begin_delete(config.resource_group).result(
                     timeout=300
                 )
-            except Exception:
-                pass
+            except Exception as e:
+                msg = f"Azure destroy failed for resource group '{config.resource_group}': {e}"
+                raise RuntimeError(msg) from e
             return True
 
         return await asyncio.to_thread(_destroy)
+
+    async def destroy_managed_resources(self, credentials: Credentials) -> dict[str, Any]:
+        credential, subscription_id = _get_azure_credential(credentials)
+
+        def _destroy_managed_resources() -> dict[str, Any]:
+            resource_client = ResourceManagementClient(credential, subscription_id)
+            targets: list[str] = []
+            for rg in resource_client.resource_groups.list():
+                name = rg.name or ""
+                tags = rg.tags or {}
+                if not name:
+                    continue
+                if tags.get("project") != "privateai":
+                    continue
+                if tags.get("created-by") != "privateai-backend":
+                    continue
+                targets.append(name)
+
+            deleted: list[str] = []
+            failed: list[str] = []
+            for rg_name in sorted(targets):
+                try:
+                    resource_client.resource_groups.begin_delete(rg_name).result(timeout=900)
+                    deleted.append(rg_name)
+                except ResourceNotFoundError:
+                    deleted.append(rg_name)
+                except Exception as e:
+                    logger.error("Bulk Azure destroy failed for %s: %s", rg_name, e)
+                    failed.append(rg_name)
+
+            return {
+                "matched_resource_groups": sorted(targets),
+                "deleted_resource_groups": deleted,
+                "failed_resource_groups": failed,
+            }
+
+        return await asyncio.to_thread(_destroy_managed_resources)
 
     # ── Validation ───────────────────────────────────────────
 

@@ -38,13 +38,29 @@ class DeploymentOrchestrator:
     def _get_provider(self, provider_name: str) -> CloudProvider:
         return get_provider(provider_name)
 
+    def _resolve_credentials(
+        self,
+        deployment_id: str,
+        provider_name: str,
+    ) -> Credentials | None:
+        provider_credentials = self.store.get_provider_credentials(provider_name)
+        if provider_credentials is not None:
+            return provider_credentials
+        deployment_credentials = self.store.get_credentials(deployment_id)
+        if deployment_credentials is None:
+            return None
+        return deployment_credentials
+
     # ── Credential validation ────────────────────────────────
 
     async def validate_credentials(
         self, provider_name: str, credentials: Credentials
     ) -> tuple[bool, str]:
         provider = self._get_provider(provider_name)
-        return await provider.validate_credentials(credentials)
+        valid, message = await provider.validate_credentials(credentials)
+        if valid:
+            self.store.set_provider_credentials(provider_name, credentials)
+        return valid, message
 
     # ── Full provisioning pipeline ───────────────────────────
 
@@ -61,6 +77,7 @@ class DeploymentOrchestrator:
         WebSocket for progress.
         """
         record = self.store.create(config, credentials)
+        self.store.set_provider_credentials(config.provider, credentials)
         logger.info("Created deployment %s (provider=%s)", record.id, config.provider)
 
         # Register with cost monitor
@@ -87,7 +104,10 @@ class DeploymentOrchestrator:
         set up VM software.
         """
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials:
             logger.error("Deployment %s not found in store", deployment_id)
             return
@@ -251,7 +271,10 @@ class DeploymentOrchestrator:
     async def setup_deployment(self, deployment_id: str) -> bool:
         """Re-run VM software setup (e.g. after a reboot)."""
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials or not record.public_ip:
             return False
 
@@ -278,7 +301,10 @@ class DeploymentOrchestrator:
     async def start_deployment(self, deployment_id: str) -> str | None:
         """Start a stopped VM. Returns the public IP or None."""
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials:
             return None
 
@@ -300,7 +326,10 @@ class DeploymentOrchestrator:
 
     async def stop_deployment(self, deployment_id: str) -> bool:
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials:
             return False
 
@@ -320,7 +349,10 @@ class DeploymentOrchestrator:
     async def set_auto_shutdown(self, deployment_id: str, time_utc: str = "1800") -> bool:
         """Configure daily auto-shutdown for cost safety."""
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials:
             return False
 
@@ -334,7 +366,10 @@ class DeploymentOrchestrator:
 
     async def destroy_deployment(self, deployment_id: str) -> bool:
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials:
             return False
 
@@ -349,17 +384,50 @@ class DeploymentOrchestrator:
                 cost_monitor = get_cost_monitor()
                 cost_monitor.stop_billing(deployment_id)
                 cost_monitor.remove_deployment(deployment_id)
+            else:
+                self.store.update_status(deployment_id, DeploymentStatus.FAILED, error="Destroy failed")
             return success
         except Exception as e:
             self.store.update_status(deployment_id, DeploymentStatus.FAILED, error=str(e))
             return False
+
+    async def destroy_managed_resources(
+        self,
+        provider_name: str,
+        credentials: Credentials | None = None,
+    ) -> dict[str, Any]:
+        resolved_credentials = credentials or self.store.get_provider_credentials(provider_name)
+        if resolved_credentials is None:
+            raise ValueError(f"No {provider_name} credentials available for managed cleanup")
+
+        provider = self._get_provider(provider_name)
+        result = await provider.destroy_managed_resources(resolved_credentials)
+        self.store.set_provider_credentials(provider_name, resolved_credentials)
+
+        deleted_resource_groups = set(result.get("deleted_resource_groups", []))
+        removed_deployment_ids: list[str] = []
+        for record in self.store.list_all():
+            if record.config.provider != provider_name:
+                continue
+            if record.config.resource_group not in deleted_resource_groups:
+                continue
+            get_cost_monitor().stop_billing(record.id)
+            get_cost_monitor().remove_deployment(record.id)
+            self.store.delete(record.id)
+            removed_deployment_ids.append(record.id)
+
+        result["removed_deployment_ids"] = removed_deployment_ids
+        return result
 
     # ── Status ───────────────────────────────────────────────
 
     async def refresh_status(self, deployment_id: str) -> DeploymentRecord | None:
         """Query the cloud provider for live VM status and update the record."""
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials:
             return None
 
@@ -383,7 +451,10 @@ class DeploymentOrchestrator:
         self, deployment_id: str, check_gpu: bool = False
     ) -> dict[str, Any]:
         record = self.store.get(deployment_id)
-        credentials = self.store.get_credentials(deployment_id)
+        credentials = self._resolve_credentials(
+            deployment_id,
+            record.config.provider if record else "",
+        )
         if not record or not credentials or not record.public_ip:
             return {"error": "Deployment not found or no IP"}
 
