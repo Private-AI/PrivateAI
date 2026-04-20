@@ -35,6 +35,8 @@ class AzureVMProfile:
     max_model_b: float = 999.0
     # Alternative SKUs tried in order when primary is capacity-constrained
     fallback_vm_sizes: tuple[str, ...] = ()
+    # Azure usage/quota family token used for account-aware availability filtering
+    quota_family: str | None = None
 
 
 # Profiles ordered cheapest → most expensive.
@@ -113,6 +115,7 @@ AZURE_VM_PROFILES: list[AzureVMProfile] = [
         cost_per_hour=0.526,
         min_model_b=0.0,
         max_model_b=34.0,
+        quota_family="NCASv3_T4",
     ),
     AzureVMProfile(
         id="a100-gpu",
@@ -127,6 +130,7 @@ AZURE_VM_PROFILES: list[AzureVMProfile] = [
         cost_per_hour=3.67,
         min_model_b=34.0,
         max_model_b=999.0,
+        quota_family="NCADSA100v4",
     ),
 ]
 

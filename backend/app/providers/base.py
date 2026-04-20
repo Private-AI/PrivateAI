@@ -117,6 +117,26 @@ class CloudProvider(abc.ABC):
         Each entry should include at least ``{"id": ..., "name": ..., "gpus": ..., "vcpus": ..., "memory_gb": ...}``.
         """
 
+    async def list_accessible_vm_sizes(
+        self,
+        region: str,
+        credentials: Credentials,
+    ) -> list[dict[str, Any]]:
+        """Return VM sizes annotated with account-specific availability.
+
+        Providers can override this with quota-aware checks. The default keeps
+        the static catalog available and marks every size as selectable.
+        """
+        sizes = self.list_vm_sizes(region)
+        return [
+            {
+                **size,
+                "available": size.get("available", True),
+                "availability_reason": size.get("availability_reason"),
+            }
+            for size in sizes
+        ]
+
     # ── Credentials ──────────────────────────────────────────
 
     @abc.abstractmethod

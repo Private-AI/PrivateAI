@@ -123,6 +123,21 @@ export async function fetchVMSizes(
   return data.vm_sizes;
 }
 
+export async function fetchAccessibleVMSizes(
+  provider: string,
+  region: string,
+  credentials: AzureCredentials,
+): Promise<VMSize[]> {
+  const data = await request<{ vm_sizes: VMSize[] }>(
+    `/providers/${provider}/accessible-vm-sizes`,
+    {
+      method: "POST",
+      body: JSON.stringify({ region, credentials }),
+    },
+  );
+  return data.vm_sizes;
+}
+
 // ---------------------------------------------------------------------------
 // Credentials validation
 // ---------------------------------------------------------------------------

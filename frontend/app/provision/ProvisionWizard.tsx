@@ -6,9 +6,7 @@ import {
   IconCheck,
   IconChevronRight,
   IconCopy,
-  IconExternalLink,
   IconChat,
-  IconGlobe,
   IconLoader,
   IconServer,
   IconShield,
@@ -19,8 +17,8 @@ import {
 import {
   connectDeploymentWS,
   createDeployment,
+  fetchAccessibleVMSizes,
   fetchProviders,
-  fetchVMSizes,
   recommendVM,
   setupPermissions,
   validateCredentials,
@@ -56,6 +54,20 @@ function diskSizesForVM(vmId: string): { os: number; data: number } {
   if (vmId === "small-cpu") return { os: 32, data: 64 };
   if (vmId === "medium-cpu") return { os: 64, data: 128 };
   return { os: 128, data: 256 };
+}
+
+function buildAzureCredentials(form: CredentialFormState): AzureCredentials {
+  return {
+    provider: "azure",
+    subscription_id: form.subscription_id,
+    tenant_id: form.tenant_id,
+    client_id: form.client_id,
+    client_secret: form.client_secret,
+  };
+}
+
+function getCredentialKey(credentials: AzureCredentials): string {
+  return JSON.stringify(credentials);
 }
 
 const COMING_SOON_PROVIDERS: { id: string; name: string }[] = [
@@ -260,6 +272,7 @@ function CredentialsStep({
   settingUpPermissions,
   onBack,
   onNext,
+  canProceed,
 }: {
   form: CredentialFormState;
   onChange: (update: Partial<CredentialFormState>) => void;
@@ -271,6 +284,7 @@ function CredentialsStep({
   settingUpPermissions: boolean;
   onBack: () => void;
   onNext: () => void;
+  canProceed: boolean;
 }) {
   const fields: { key: keyof Omit<CredentialFormState, "saveCredentials">; label: string; placeholder: string; type?: string }[] = [
     { key: "subscription_id", label: "Subscription ID", placeholder: "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" },
@@ -375,7 +389,7 @@ function CredentialsStep({
         <button type="button" className="btn btn-ghost" onClick={onBack}>
           Back
         </button>
-        <button type="button" className="btn btn-primary" disabled={!allFilled} onClick={onNext}>
+        <button type="button" className="btn btn-primary" disabled={!canProceed} onClick={onNext}>
           Next
           <IconChevronRight size={14} />
         </button>
@@ -401,6 +415,7 @@ function ConfigStep({
   onChange,
   vmSizes,
   vmSizesLoading,
+  vmSizeMessage,
   onBack,
   onDeploy,
   onModelChange,
@@ -410,12 +425,17 @@ function ConfigStep({
   onChange: (update: Partial<ConfigFormState>) => void;
   vmSizes: VMSize[];
   vmSizesLoading: boolean;
+  vmSizeMessage: string | null;
   onBack: () => void;
   onDeploy: () => void;
   onModelChange: (model: string) => void;
 }) {
   const selectedVM = vmSizes.find((v) => v.id === form.vmSize);
-  const canDeploy = form.region.length > 0 && form.vmSize.length > 0 && form.model.trim().length > 0;
+  const canDeploy =
+    form.region.length > 0 &&
+    form.vmSize.length > 0 &&
+    form.model.trim().length > 0 &&
+    selectedVM?.available === true;
 
   return (
     <div className="flex flex-col gap-5 animate-[slide-up_0.25s_ease-out]">
@@ -491,7 +511,9 @@ function ConfigStep({
           {vmSizesLoading && <IconLoader size={14} className="text-[var(--muted)]" />}
         </div>
         {vmSizes.length === 0 && !vmSizesLoading && form.region && (
-          <p className="text-xs text-[var(--muted)] py-2">No VM sizes available for this region.</p>
+          <p className="text-xs text-[var(--muted)] py-2">
+            {vmSizeMessage ?? "No VM sizes available for this region."}
+          </p>
         )}
         {vmSizes.length === 0 && !form.region && (
           <p className="text-xs text-[var(--muted)] py-2">Select a region first.</p>
@@ -502,15 +524,20 @@ function ConfigStep({
               key={vm.id}
               type="button"
               className={[
-                "card p-3 text-left cursor-pointer transition-all duration-200",
+                "card p-3 text-left transition-all duration-200",
+                vm.available ? "cursor-pointer" : "opacity-55 cursor-not-allowed",
                 form.vmSize === vm.id
                   ? "border-[var(--accent)] ring-1 ring-[var(--ring-color)]"
                   : "",
               ].join(" ")}
+              disabled={!vm.available}
               onClick={() => onChange({ vmSize: vm.id })}
             >
               <div className="flex items-center justify-between gap-2">
-                <p className="text-sm font-medium text-[var(--fg)]">{vm.display_name}</p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-[var(--fg)]">{vm.display_name}</p>
+                  {!vm.available && <span className="badge badge-error">Unavailable</span>}
+                </div>
                 <span className="text-xs font-medium text-[var(--accent)]">
                   ${vm.cost_per_hour.toFixed(2)}/hr
                 </span>
@@ -521,6 +548,9 @@ function ConfigStep({
                 <span>{vm.memory_gb} GB RAM</span>
               </div>
               <p className="mt-1 text-xs text-[var(--muted)] line-clamp-2">{vm.description}</p>
+              {!vm.available && vm.availability_reason && (
+                <p className="mt-2 text-xs text-[var(--error)]">{vm.availability_reason}</p>
+              )}
             </button>
           ))}
         </div>
@@ -763,6 +793,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     saveCredentials: false,
   });
   const [validationResult, setValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
+  const [validatedCredentialsKey, setValidatedCredentialsKey] = useState<string | null>(null);
   const [validating, setValidating] = useState(false);
   const [permissionsResult, setPermissionsResult] = useState<{ success: boolean; message: string } | null>(null);
   const [settingUpPermissions, setSettingUpPermissions] = useState(false);
@@ -776,9 +807,9 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
   });
   const [vmSizes, setVmSizes] = useState<VMSize[]>([]);
   const [vmSizesLoading, setVmSizesLoading] = useState(false);
+  const [vmSizeMessage, setVmSizeMessage] = useState<string | null>(null);
 
   // --- Step 4: Deploy ---
-  const [deploymentId, setDeploymentId] = useState<string | null>(null);
   const [provisionSteps, setProvisionSteps] = useState<StepProgress[]>([]);
   const [setupSteps, setSetupSteps] = useState<StepProgress[]>([]);
   const [deployError, setDeployError] = useState<string | null>(null);
@@ -786,6 +817,10 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
   const [deployComplete, setDeployComplete] = useState(false);
   const [deployFailed, setDeployFailed] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+
+  const currentCredentials = buildAzureCredentials(credForm);
+  const currentCredentialsKey = getCredentialKey(currentCredentials);
+  const credentialsVerified = validatedCredentialsKey === currentCredentialsKey;
 
   // --- Load settings on mount ---
   useEffect(() => {
@@ -842,30 +877,55 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
   useEffect(() => {
     if (!selectedProvider || !configForm.region) {
       setVmSizes([]);
+      setVmSizeMessage(null);
+      setConfigForm((prev) => (prev.vmSize ? { ...prev, vmSize: "" } : prev));
+      return;
+    }
+
+    if (!credentialsVerified) {
+      setVmSizes([]);
+      setVmSizeMessage("Validate credentials to load deployable VM sizes for this region.");
+      setConfigForm((prev) => (prev.vmSize ? { ...prev, vmSize: "" } : prev));
       return;
     }
 
     let cancelled = false;
     setVmSizesLoading(true);
+    setVmSizeMessage(null);
+    const regionCredentials = buildAzureCredentials(credForm);
 
-    fetchVMSizes(selectedProvider.id, configForm.region)
+    fetchAccessibleVMSizes(selectedProvider.id, configForm.region, regionCredentials)
       .then((data) => {
         if (cancelled) return;
         setVmSizes(data);
-        // Auto-select first if nothing selected
-        if (data.length > 0 && !data.find((v) => v.id === configForm.vmSize)) {
-          setConfigForm((prev) => ({ ...prev, vmSize: data[0].id }));
+        const firstAvailable = data.find((vm) => vm.available);
+        if (!firstAvailable) {
+          setVmSizeMessage(
+            `No deployable VM sizes are available in ${configForm.region} for this subscription.`,
+          );
+          setConfigForm((prev) => (prev.vmSize ? { ...prev, vmSize: "" } : prev));
+          return;
+        }
+
+        if (!data.find((vm) => vm.id === configForm.vmSize && vm.available)) {
+          setConfigForm((prev) => ({ ...prev, vmSize: firstAvailable.id }));
         }
       })
-      .catch(() => {
-        if (!cancelled) setVmSizes([]);
+      .catch((err: unknown) => {
+        if (!cancelled) {
+          setVmSizes([]);
+          setVmSizeMessage(
+            err instanceof Error ? err.message : "Failed to load deployable VM sizes.",
+          );
+          setConfigForm((prev) => (prev.vmSize ? { ...prev, vmSize: "" } : prev));
+        }
       })
       .finally(() => {
         if (!cancelled) setVmSizesLoading(false);
       });
 
     return () => { cancelled = true; };
-  }, [selectedProvider, configForm.region]);
+  }, [selectedProvider, configForm.region, configForm.vmSize, credForm, credentialsVerified, currentCredentialsKey]);
 
   // --- Cleanup websocket ---
   useEffect(() => {
@@ -895,36 +955,24 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     setValidationResult(null);
     setPermissionsResult(null);
     try {
-      const creds: AzureCredentials = {
-        provider: "azure",
-        subscription_id: credForm.subscription_id,
-        tenant_id: credForm.tenant_id,
-        client_id: credForm.client_id,
-        client_secret: credForm.client_secret,
-      };
-      const result = await validateCredentials(selectedProvider.id, creds);
+      const result = await validateCredentials(selectedProvider.id, currentCredentials);
       setValidationResult(result);
+      setValidatedCredentialsKey(result.valid ? currentCredentialsKey : null);
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Validation failed";
       setValidationResult({ valid: false, message });
+      setValidatedCredentialsKey(null);
     } finally {
       setValidating(false);
     }
-  }, [selectedProvider, credForm]);
+  }, [selectedProvider, currentCredentials, currentCredentialsKey]);
 
   const handleSetupPermissions = useCallback(async () => {
     if (!selectedProvider) return;
     setSettingUpPermissions(true);
     setPermissionsResult(null);
     try {
-      const creds: AzureCredentials = {
-        provider: "azure",
-        subscription_id: credForm.subscription_id,
-        tenant_id: credForm.tenant_id,
-        client_id: credForm.client_id,
-        client_secret: credForm.client_secret,
-      };
-      const result = await setupPermissions(selectedProvider.id, creds);
+      const result = await setupPermissions(selectedProvider.id, currentCredentials);
       setPermissionsResult({ success: result.success, message: result.message });
     } catch (err: unknown) {
       const message = err instanceof Error ? err.message : "Permission setup failed";
@@ -932,7 +980,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     } finally {
       setSettingUpPermissions(false);
     }
-  }, [selectedProvider, credForm]);
+  }, [selectedProvider, currentCredentials]);
 
   const handleCredNext = useCallback(() => {
     // Save credentials if checkbox is checked
@@ -959,13 +1007,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     completedSteps.current.add(2);
     goToStep(3);
 
-    const credentials: AzureCredentials = {
-      provider: "azure",
-      subscription_id: credForm.subscription_id,
-      tenant_id: credForm.tenant_id,
-      client_id: credForm.client_id,
-      client_secret: credForm.client_secret,
-    };
+    const credentials = currentCredentials;
 
     const selectedVM = vmSizes.find((v) => v.id === configForm.vmSize);
     const disks = diskSizesForVM(configForm.vmSize);
@@ -990,7 +1032,6 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
 
     try {
       const result = await createDeployment(credentials, config);
-      setDeploymentId(result.id);
 
       // Save to history immediately with pending status
       addDeploymentToHistory({
@@ -1115,7 +1156,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       setDeployFailed(true);
       setDeployError(message);
     }
-  }, [selectedProvider, credForm, configForm, vmSizes, goToStep]);
+  }, [selectedProvider, currentCredentials, configForm, vmSizes, goToStep]);
 
   // --- Model change with VM auto-recommendation ---
   const handleModelChange = useCallback(async (model: string) => {
@@ -1124,7 +1165,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     try {
       const rec = await recommendVM(selectedProvider.id, model);
       setConfigForm((prev) => {
-        const match = vmSizes.find((v) => v.id === rec.vm_profile_id);
+        const match = vmSizes.find((v) => v.id === rec.vm_profile_id && v.available);
         if (!match) return { ...prev, model };
         return { ...prev, model, vmSize: rec.vm_profile_id };
       });
@@ -1132,6 +1173,24 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       // Silently ignore — user can still select VM manually
     }
   }, [selectedProvider, vmSizes]);
+
+  const handleCredentialChange = useCallback((update: Partial<CredentialFormState>) => {
+    const touchesCredentials =
+      "subscription_id" in update ||
+      "tenant_id" in update ||
+      "client_id" in update ||
+      "client_secret" in update;
+
+    if (touchesCredentials) {
+      setValidationResult(null);
+      setPermissionsResult(null);
+      setValidatedCredentialsKey(null);
+      setVmSizes([]);
+      setVmSizeMessage(null);
+    }
+
+    setCredForm((prev) => ({ ...prev, ...update }));
+  }, []);
 
   // --- Back navigation ---
   const handleBack = useCallback(
@@ -1180,7 +1239,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
         {step === 1 && (
           <CredentialsStep
             form={credForm}
-            onChange={(update) => setCredForm((prev) => ({ ...prev, ...update }))}
+            onChange={handleCredentialChange}
             onValidate={handleCredValidate}
             onSetupPermissions={handleSetupPermissions}
             validationResult={validationResult}
@@ -1189,6 +1248,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
             settingUpPermissions={settingUpPermissions}
             onBack={() => handleBack(1)}
             onNext={handleCredNext}
+            canProceed={credentialsVerified && validationResult?.valid === true}
           />
         )}
 
@@ -1199,6 +1259,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
             onChange={(update) => setConfigForm((prev) => ({ ...prev, ...update }))}
             vmSizes={vmSizes}
             vmSizesLoading={vmSizesLoading}
+            vmSizeMessage={vmSizeMessage}
             onBack={() => handleBack(2)}
             onDeploy={handleDeploy}
             onModelChange={handleModelChange}

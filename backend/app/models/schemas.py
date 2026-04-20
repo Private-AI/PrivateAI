@@ -101,6 +101,13 @@ class VMSizeListResponse(BaseModel):
     vm_sizes: list[dict[str, Any]]
 
 
+class AccessibleVMSizeRequest(BaseModel):
+    """POST /api/v1/providers/{provider}/accessible-vm-sizes."""
+
+    region: str
+    credentials: Credentials
+
+
 # ── Credentials ──────────────────────────────────────────────────────
 
 

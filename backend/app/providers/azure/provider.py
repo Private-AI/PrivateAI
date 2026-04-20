@@ -15,6 +15,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import re
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
@@ -163,11 +164,55 @@ def _make_step(step_id: str, label: str, status: str = "pending") -> StepProgres
     return StepProgress(step=step_id, label=label, status=status)
 
 
+def _normalize_quota_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "", value.lower())
+
+
 # ── AzureProvider ────────────────────────────────────────────────────
 
 
 class AzureProvider(CloudProviderBase):
     """Azure implementation of the cloud provider interface."""
+
+    @staticmethod
+    def _vm_profile_to_dict(
+        profile: Any,
+        *,
+        available: bool = True,
+        availability_reason: str | None = None,
+    ) -> dict[str, Any]:
+        return {
+            "id": profile.id,
+            "display_name": profile.display_name,
+            "vm_size": profile.vm_size,
+            "gpus": profile.gpus,
+            "gpu_model": profile.gpu_model,
+            "vcpus": profile.vcpus,
+            "memory_gb": profile.memory_gb,
+            "confidential": profile.confidential,
+            "description": profile.description,
+            "cost_per_hour": profile.cost_per_hour,
+            "available": available,
+            "availability_reason": availability_reason,
+        }
+
+    @staticmethod
+    def _extract_available_quota(
+        usages: list[tuple[str, str, int, int]],
+        quota_token: str,
+    ) -> int | None:
+        normalized_token = _normalize_quota_name(quota_token)
+        for localized_name, value_name, current, limit in usages:
+            if normalized_token in localized_name or normalized_token in value_name:
+                return max(limit - current, 0)
+        return None
+
+    @staticmethod
+    def _extract_total_core_quota(usages: list[tuple[str, str, int, int]]) -> int | None:
+        for localized_name, value_name, current, limit in usages:
+            if value_name == "cores" or "totalregionalcores" in localized_name:
+                return max(limit - current, 0)
+        return None
 
     @property
     def name(self) -> str:
@@ -181,21 +226,76 @@ class AzureProvider(CloudProviderBase):
         return AZURE_GPU_REGIONS
 
     def list_vm_sizes(self, region: str) -> list[dict[str, Any]]:
-        return [
-            {
-                "id": p.id,
-                "display_name": p.display_name,
-                "vm_size": p.vm_size,
-                "gpus": p.gpus,
-                "gpu_model": p.gpu_model,
-                "vcpus": p.vcpus,
-                "memory_gb": p.memory_gb,
-                "confidential": p.confidential,
-                "description": p.description,
-                "cost_per_hour": p.cost_per_hour,
-            }
-            for p in AZURE_VM_PROFILES
-        ]
+        return [self._vm_profile_to_dict(profile) for profile in AZURE_VM_PROFILES]
+
+    async def list_accessible_vm_sizes(
+        self,
+        region: str,
+        credentials: Credentials,
+    ) -> list[dict[str, Any]]:
+        credential, subscription_id = _get_azure_credential(credentials)
+        compute_client = ComputeManagementClient(credential, subscription_id)
+
+        def _list_accessible() -> list[dict[str, Any]]:
+            usages = [
+                (
+                    _normalize_quota_name(usage.name.localized_value or "") if usage.name else "",
+                    _normalize_quota_name(usage.name.value or "") if usage.name else "",
+                    usage.current_value or 0,
+                    usage.limit or 0,
+                )
+                for usage in compute_client.usage.list(region)
+            ]
+            total_cores_available = self._extract_total_core_quota(usages)
+
+            region_sizes: set[str] = set()
+            try:
+                region_sizes = {
+                    size.name
+                    for size in compute_client.virtual_machine_sizes.list(region)
+                    if size.name
+                }
+            except Exception as e:
+                logger.warning("Could not list Azure VM sizes for %s: %s", region, e)
+
+            results: list[dict[str, Any]] = []
+            for profile in AZURE_VM_PROFILES:
+                availability_reason: str | None = None
+                candidate_sizes = [profile.vm_size, *profile.fallback_vm_sizes]
+
+                if region_sizes and not any(size in region_sizes for size in candidate_sizes):
+                    availability_reason = f"This VM family is not offered in {region}."
+                elif total_cores_available is not None and profile.vcpus > total_cores_available:
+                    availability_reason = (
+                        f"Requires {profile.vcpus} regional cores, but only "
+                        f"{total_cores_available} are available in {region}."
+                    )
+                elif profile.quota_family:
+                    family_cores_available = self._extract_available_quota(
+                        usages,
+                        profile.quota_family,
+                    )
+                    if family_cores_available is None:
+                        availability_reason = (
+                            f"No approved {profile.quota_family} quota is visible in {region}."
+                        )
+                    elif profile.vcpus > family_cores_available:
+                        availability_reason = (
+                            f"Requires {profile.vcpus} {profile.quota_family} family cores, but only "
+                            f"{family_cores_available} are available in {region}."
+                        )
+
+                results.append(
+                    self._vm_profile_to_dict(
+                        profile,
+                        available=availability_reason is None,
+                        availability_reason=availability_reason,
+                    )
+                )
+
+            return results
+
+        return await asyncio.to_thread(_list_accessible)
 
     # ── Credentials ──────────────────────────────────────────
 

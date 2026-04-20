@@ -151,6 +151,31 @@ Matching deployment records are removed from the app state after successful dele
 
 ---
 
+### Quota-Aware VM Size Filtering
+
+**Problem:** The provisioning wizard showed a static Azure VM catalog, so users could select VM sizes their subscription could not actually deploy. This led to predictable failures such as:
+- T4 GPU blocked by `Standard NCASv3_T4 Family` quota = `0`
+- 8-vCPU CPU VMs blocked by `Total Regional Cores` quota = `4`
+
+**Fix:** Added an account-aware VM size lookup flow backed by the Azure SDK:
+- Backend endpoint: `POST /api/v1/providers/{provider}/accessible-vm-sizes`
+- The backend authenticates with the supplied Azure credentials and queries:
+  - `ComputeManagementClient.usage.list(region)` for quota/usage
+  - `ComputeManagementClient.virtual_machine_sizes.list(region)` for region SKU availability
+- Each VM profile is returned with:
+  - `available: true | false`
+  - `availability_reason: string | null`
+
+**Frontend changes:**
+- The credentials step now requires a successful validation before the user can continue.
+- Changing any credential field invalidates the previous validation result.
+- The configuration step loads deployable VM sizes for the selected region using the validated credentials.
+- VM sizes that are not deployable are shown disabled with the Azure quota/availability reason inline.
+
+**Decision:** Keep unavailable VM sizes visible but disabled instead of hiding them entirely. This explains to the user why a larger or GPU-backed profile is unavailable and reduces confusion compared to a silently filtered list.
+
+---
+
 ## SSH Tunnel & Ollama Security
 
 ### No Plaintext Ollama URL on the Wire

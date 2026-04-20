@@ -5,6 +5,7 @@ from __future__ import annotations
 from fastapi import APIRouter, HTTPException
 
 from app.models.schemas import (
+    AccessibleVMSizeRequest,
     ErrorResponse,
     ProviderInfoResponse,
     RecommendVMResponse,
@@ -44,6 +45,22 @@ async def get_vm_sizes(provider: str, region: str = "eastus"):
     except KeyError as e:
         raise HTTPException(404, detail=str(e))
     return VMSizeListResponse(vm_sizes=p.list_vm_sizes(region))
+
+
+@router.post(
+    "/{provider}/accessible-vm-sizes",
+    response_model=VMSizeListResponse,
+    responses={404: {"model": ErrorResponse}},
+)
+async def get_accessible_vm_sizes(provider: str, request: AccessibleVMSizeRequest):
+    """List VM sizes annotated with account-specific deployability."""
+    try:
+        p = get_provider(provider)
+    except KeyError as e:
+        raise HTTPException(404, detail=str(e))
+
+    vm_sizes = await p.list_accessible_vm_sizes(request.region, request.credentials)
+    return VMSizeListResponse(vm_sizes=vm_sizes)
 
 
 @router.post(

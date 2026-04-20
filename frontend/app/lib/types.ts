@@ -118,6 +118,8 @@ export interface VMSize {
   confidential: boolean;
   description: string;
   cost_per_hour: number;
+  available: boolean;
+  availability_reason: string | null;
 }
 
 // ---------------------------------------------------------------------------

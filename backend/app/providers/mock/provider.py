@@ -85,6 +85,8 @@ class MockProvider(CloudProviderBase):
                 "confidential": True,
                 "description": "H100 GPU with AMD SEV-SNP confidential computing.",
                 "cost_per_hour": 35.00,
+                "available": True,
+                "availability_reason": None,
             },
             {
                 "id": "a100-standard",
@@ -97,6 +99,8 @@ class MockProvider(CloudProviderBase):
                 "confidential": False,
                 "description": "A100 GPU for large model inference.",
                 "cost_per_hour": 3.67,
+                "available": True,
+                "availability_reason": None,
             },
             {
                 "id": "t4-standard",
@@ -109,6 +113,8 @@ class MockProvider(CloudProviderBase):
                 "confidential": False,
                 "description": "T4 GPU for smaller models.",
                 "cost_per_hour": 0.53,
+                "available": True,
+                "availability_reason": None,
             },
             {
                 "id": "test-no-gpu",
@@ -121,6 +127,8 @@ class MockProvider(CloudProviderBase):
                 "confidential": False,
                 "description": "Cheap VM for testing (~$0.10/hr).",
                 "cost_per_hour": 0.10,
+                "available": True,
+                "availability_reason": None,
             },
         ]
 
