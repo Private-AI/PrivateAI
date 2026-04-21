@@ -106,27 +106,40 @@ class DeploymentStore:
         except Exception as e:
             logger.warning("Could not persist deployment store: %s", e)
 
-    # ── CRUD ─────────────────────────────────────────────────
+    # ── CRUD ─────────────────────────────────────────────────────────────
 
-    def create(self, config: DeploymentConfig, credentials: Any) -> DeploymentRecord:
+    def create(self, config: DeploymentConfig, credentials: Any, user_id: str = "") -> DeploymentRecord:
         with self._lock:
-            record = DeploymentRecord(config=config)
+            record = DeploymentRecord(config=config, user_id=user_id)
             self._records[record.id] = record
             self._credentials[record.id] = credentials
             self._save()
             return record
 
-    def get(self, deployment_id: str) -> DeploymentRecord | None:
+    def get(self, deployment_id: str, user_id: str | None = None) -> DeploymentRecord | None:
         with self._lock:
-            return self._records.get(deployment_id)
+            record = self._records.get(deployment_id)
+            if record is None:
+                return None
+            if user_id is not None and record.user_id != user_id:
+                return None
+            return record
 
-    def get_credentials(self, deployment_id: str) -> Any | None:
+    def get_credentials(self, deployment_id: str, user_id: str | None = None) -> Any | None:
         with self._lock:
+            record = self._records.get(deployment_id)
+            if record is None:
+                return None
+            if user_id is not None and record.user_id != user_id:
+                return None
             return self._credentials.get(deployment_id)
 
-    def update_credentials(self, deployment_id: str, credentials: Any) -> bool:
+    def update_credentials(self, deployment_id: str, credentials: Any, user_id: str | None = None) -> bool:
         with self._lock:
-            if deployment_id not in self._records:
+            record = self._records.get(deployment_id)
+            if record is None:
+                return False
+            if user_id is not None and record.user_id != user_id:
                 return False
             self._credentials[deployment_id] = credentials
             self._save()
@@ -141,18 +154,24 @@ class DeploymentStore:
             self._provider_credentials[provider_name] = credentials
             self._save()
 
-    def list_all(self) -> list[DeploymentRecord]:
+    def list_all(self, user_id: str | None = None) -> list[DeploymentRecord]:
         with self._lock:
-            return list(self._records.values())
+            records = list(self._records.values())
+            if user_id is not None:
+                records = [r for r in records if r.user_id == user_id]
+            return records
 
-    def delete(self, deployment_id: str) -> bool:
+    def delete(self, deployment_id: str, user_id: str | None = None) -> bool:
         with self._lock:
-            if deployment_id in self._records:
-                del self._records[deployment_id]
-                self._credentials.pop(deployment_id, None)
-                self._save()
-                return True
-            return False
+            record = self._records.get(deployment_id)
+            if record is None:
+                return False
+            if user_id is not None and record.user_id != user_id:
+                return False
+            del self._records[deployment_id]
+            self._credentials.pop(deployment_id, None)
+            self._save()
+            return True
 
     # ── State mutations ──────────────────────────────────────
 

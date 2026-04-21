@@ -28,6 +28,14 @@ const V1 = "/api/v1";
 // Helpers
 // ---------------------------------------------------------------------------
 
+function getAuthHeaders(): Record<string, string> {
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("privateai_token")
+      : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
+
 async function request<T>(
   path: string,
   options: RequestInit = {},
@@ -37,6 +45,7 @@ async function request<T>(
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeaders(),
       ...(options.headers as Record<string, string> | undefined),
     },
     ...options,
@@ -70,6 +79,7 @@ async function requestRoot<T>(
   const res = await fetch(url, {
     headers: {
       "Content-Type": "application/json",
+      ...getAuthHeaders(),
       ...(options.headers as Record<string, string> | undefined),
     },
     ...options,
@@ -431,6 +441,12 @@ export function deleteModel(
 // ---------------------------------------------------------------------------
 
 export function connectDeploymentWS(id: string): WebSocket {
-  const url = `${WS_URL}${V1}/deployments/${id}/ws`;
+  const token =
+    typeof window !== "undefined"
+      ? localStorage.getItem("privateai_token")
+      : null;
+  const url = token
+    ? `${WS_URL}${V1}/deployments/${id}/ws?token=${encodeURIComponent(token)}`
+    : `${WS_URL}${V1}/deployments/${id}/ws`;
   return new WebSocket(url);
 }

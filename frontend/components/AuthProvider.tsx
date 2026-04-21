@@ -1,18 +1,32 @@
 "use client";
 
-import React, { createContext, useContext, useEffect, useState } from "react";
+import React, { createContext, useContext, useEffect, useState, useCallback } from "react";
 
 interface User {
   id: string;
   username: string;
 }
 
+interface VaultData {
+  credentials?: {
+    subscription_id: string;
+    tenant_id: string;
+    client_id: string;
+    client_secret: string;
+    ssh_private_key: string;
+  };
+}
+
 interface AuthContextType {
   user: User | null;
   token: string | null;
+  vault: VaultData | null;
+  vaultLocked: boolean;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   logout: () => void;
+  unlockVault: (password: string) => Promise<void>;
+  lockVault: () => void;
   isLoading: boolean;
 }
 
@@ -23,6 +37,8 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [token, setToken] = useState<string | null>(null);
+  const [vault, setVault] = useState<VaultData | null>(null);
+  const [vaultLocked, setVaultLocked] = useState(true);
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
@@ -75,6 +91,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     localStorage.setItem("privateai_token", data.access_token);
     setToken(data.access_token);
     await fetchUser(data.access_token);
+
+    // Try auto-unlock vault with same password (dynamic import)
+    try {
+      const { retrieveVault, vaultDecrypt } = await import("@/lib/vault");
+      const blob = await retrieveVault();
+      const decrypted = await vaultDecrypt(blob, password);
+      setVault(JSON.parse(decrypted));
+      setVaultLocked(false);
+    } catch {
+      setVaultLocked(true);
+    }
   };
 
   const register = async (username: string, password: string) => {
@@ -92,14 +119,42 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await login(username, password);
   };
 
-  const logout = () => {
+  const logout = useCallback(() => {
     localStorage.removeItem("privateai_token");
     setToken(null);
     setUser(null);
+    setVault(null);
+    setVaultLocked(true);
+  }, []);
+
+  const unlockVault = async (password: string) => {
+    const { retrieveVault, vaultDecrypt } = await import("@/lib/vault");
+    const blob = await retrieveVault();
+    const decrypted = await vaultDecrypt(blob, password);
+    setVault(JSON.parse(decrypted));
+    setVaultLocked(false);
   };
 
+  const lockVault = useCallback(() => {
+    setVault(null);
+    setVaultLocked(true);
+  }, []);
+
   return (
-    <AuthContext.Provider value={{ user, token, login, register, logout, isLoading }}>
+    <AuthContext.Provider
+      value={{
+        user,
+        token,
+        vault,
+        vaultLocked,
+        login,
+        register,
+        logout,
+        unlockVault,
+        lockVault,
+        isLoading,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

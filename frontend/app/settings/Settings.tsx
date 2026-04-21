@@ -205,6 +205,7 @@ export default function Settings({ onNavigate }: SettingsProps) {
         default_models: webuiDefaultModels,
         webui_secret_key: "privateai-secret-key",
         enable_rag: webuiEnableRag,
+        webui_auth: false,
       };
       const result = await updateOpenWebuiConfig(config);
       webuiFeedback.show(

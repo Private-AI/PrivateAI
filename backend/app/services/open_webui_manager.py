@@ -1,11 +1,8 @@
-"""Local Open WebUI process manager.
+"""Open WebUI manager — supports both local subprocess and external container modes.
 
-Manages the Open WebUI subprocess lifecycle within the same container.
-The backend starts, stops, health-checks, and reconfigures Open WebUI
-by controlling environment variables and the process itself.
-
-Open WebUI runs from an isolated uv venv at /opt/open-webui-env
-(built into the Docker image at build time).
+In hosted mode, Open WebUI runs as an external Docker service. The backend
+only health-checks and updates configuration via the Open WebUI API.
+In desktop mode, the backend spawns and manages a local subprocess.
 """
 
 from __future__ import annotations
@@ -35,9 +32,13 @@ HEALTH_CHECK_INTERVAL = 10
 # Max seconds to wait for the process to become healthy after start
 STARTUP_TIMEOUT = 240
 
+# Detect hosted mode: external Open WebUI container
+OPEN_WEBUI_EXTERNAL_URL = os.environ.get("OPEN_WEBUI_URL", "")
+_IS_HOSTED = bool(OPEN_WEBUI_EXTERNAL_URL)
+
 
 class OpenWebuiManager:
-    """Singleton that owns the Open WebUI subprocess."""
+    """Manages Open WebUI — either as a subprocess (desktop) or external service (hosted)."""
 
     def __init__(self) -> None:
         self._lock = threading.Lock()
@@ -53,7 +54,7 @@ class OpenWebuiManager:
         self._connected_deployment_id: str = ""
         self._connected_deployment_name: str = ""
 
-        # Detect venv path from environment or default
+        # Detect venv path from environment or default (desktop only)
         self._venv_path = os.environ.get(
             "OPEN_WEBUI_VENV",
             "/opt/open-webui-env",
@@ -67,11 +68,13 @@ class OpenWebuiManager:
         if port:
             self._config.port = int(port)
 
-    # ── Properties ───────────────────────────────────────────
+    # ── Properties ───────────────────────────────────
 
     @property
     def installed(self) -> bool:
         """Check if the open-webui binary exists in the venv."""
+        if _IS_HOSTED:
+            return True  # External service is always "installed"
         binary = Path(self._venv_path) / "bin" / "open-webui"
         return binary.is_file()
 
@@ -82,12 +85,16 @@ class OpenWebuiManager:
             if self._status == OpenWebuiStatus.RUNNING and self._started_at > 0:
                 uptime = time.time() - self._started_at
 
+            url = ""
+            if _IS_HOSTED:
+                url = OPEN_WEBUI_EXTERNAL_URL
+            elif self._status == OpenWebuiStatus.RUNNING:
+                url = f"http://localhost:{self._config.port}"
+
             return OpenWebuiState(
                 status=self._status,
                 pid=self._process.pid if self._process else None,
-                url=f"http://localhost:{self._config.port}"
-                if self._status == OpenWebuiStatus.RUNNING
-                else "",
+                url=url,
                 config=self._config.model_copy(),
                 error=self._error,
                 uptime_seconds=round(uptime, 1),
@@ -105,14 +112,18 @@ class OpenWebuiManager:
         with self._lock:
             self._config = config
 
-    # ── Process lifecycle ────────────────────────────────────
+    # ── Process lifecycle ───────────────────────────────────
 
     async def start(self, config: OpenWebuiEnvConfig | None = None) -> OpenWebuiState:
-        """Start the Open WebUI subprocess.
+        """Start the Open WebUI subprocess (desktop) or confirm external service (hosted)."""
+        if _IS_HOSTED:
+            healthy = await self.health_check()
+            with self._lock:
+                self._status = OpenWebuiStatus.RUNNING if healthy else OpenWebuiStatus.ERROR
+                if not healthy:
+                    self._error = f"External Open WebUI not responding at {OPEN_WEBUI_EXTERNAL_URL}"
+            return self.get_state()
 
-        If config is provided, it replaces the current configuration.
-        If the process is already running, this is a no-op.
-        """
         with self._lock:
             if self._status == OpenWebuiStatus.RUNNING and self._process:
                 return self.get_state()
@@ -180,7 +191,10 @@ class OpenWebuiManager:
         return self.get_state()
 
     async def stop(self) -> None:
-        """Stop the Open WebUI subprocess gracefully."""
+        """Stop the Open WebUI subprocess gracefully (desktop only)."""
+        if _IS_HOSTED:
+            return  # Nothing to stop in hosted mode
+
         with self._lock:
             proc = self._process
             if not proc or self._status in (
@@ -223,6 +237,8 @@ class OpenWebuiManager:
 
     async def restart(self, config: OpenWebuiEnvConfig | None = None) -> OpenWebuiState:
         """Stop and re-start with optional new configuration."""
+        if _IS_HOSTED:
+            return await self.start(config)
         await self.stop()
         await asyncio.sleep(1)
         return await self.start(config)
@@ -237,15 +253,11 @@ class OpenWebuiManager:
     ) -> OpenWebuiState:
         """Connect Open WebUI to a deployment's Ollama server via SSH tunnel.
 
-        An SSH port-forward tunnel is established from this backend to
-        the VM so Ollama traffic is encrypted and port 11434 stays closed
-        in the NSG.  Open WebUI then points at the local tunnel endpoint
-        (http://127.0.0.1:{port}) instead of the VM's public IP.
+        In hosted mode, updates the external Open WebUI's Ollama URL via API.
+        In desktop mode, establishes a local SSH tunnel and restarts the subprocess.
         """
         from app.services.ssh_tunnel import get_tunnel_manager
 
-        # The deployment flow relies on the SSH tunnel; do not silently
-        # fall back to the public Ollama URL because the NSG keeps 11434 closed.
         effective_url = ollama_url
         tunnel_manager = get_tunnel_manager()
 
@@ -297,12 +309,15 @@ class OpenWebuiManager:
             effective_url,
         )
 
+        if _IS_HOSTED:
+            # Update external Open WebUI via API
+            await self.update_ollama_url(effective_url)
+            return self.get_state()
+
         with self._lock:
             is_running = self._status == OpenWebuiStatus.RUNNING
 
         if is_running:
-            # Open WebUI's runtime config API can reject unauthenticated writes,
-            # so reconnect by restarting with the tunnel URL in the process env.
             return await self.restart()
         else:
             return await self.start()
@@ -317,13 +332,13 @@ class OpenWebuiManager:
             self._config.ollama_base_urls = ollama_url
             port = self._config.port
 
-        api = f"http://localhost:{port}"
+        # In hosted mode, target the external container URL
+        api_base = OPEN_WEBUI_EXTERNAL_URL if _IS_HOSTED else f"http://localhost:{port}"
         async with httpx.AsyncClient() as client:
             try:
                 # Open WebUI API: update Ollama connection URL
-                # Works without auth token when WEBUI_AUTH=false
                 r = await client.post(
-                    f"{api}/api/v1/configs/ollama",
+                    f"{api_base}/api/v1/configs/ollama",
                     json={"url": ollama_url},
                     timeout=5,
                 )
@@ -332,7 +347,7 @@ class OpenWebuiManager:
                     return
                 # Fallback: older endpoint
                 r = await client.post(
-                    f"{api}/ollama/config/update",
+                    f"{api_base}/ollama/config/update",
                     json={"url": ollama_url, "enable": True},
                     timeout=5,
                 )
@@ -343,7 +358,7 @@ class OpenWebuiManager:
             except Exception as e:
                 logger.debug("Could not update Ollama URL via API: %s", e)
 
-    # ── Health checking ──────────────────────────────────────
+    # ── Health checking ───────────────────────────────────
 
     async def _wait_for_healthy(self) -> bool:
         """Poll the Open WebUI health endpoint until it responds."""
@@ -371,6 +386,17 @@ class OpenWebuiManager:
 
     async def health_check(self) -> bool:
         """Single health check — returns True if Open WebUI is responsive."""
+        if _IS_HOSTED:
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.get(
+                        f"{OPEN_WEBUI_EXTERNAL_URL}/health",
+                        timeout=5,
+                    )
+                    return resp.status_code < 500
+            except Exception:
+                return False
+
         with self._lock:
             if self._status != OpenWebuiStatus.RUNNING:
                 return False
@@ -423,7 +449,7 @@ class OpenWebuiManager:
             except Exception:
                 logger.exception("Error in Open WebUI health loop")
 
-    # ── Internals ────────────────────────────────────────────
+    # ── Internals ─────────────────────────────────────────────
 
     def _build_env(self) -> dict[str, str]:
         """Build the environment dict for the subprocess."""
@@ -470,7 +496,7 @@ class OpenWebuiManager:
             pass  # Process ended
 
 
-# ── Singleton ────────────────────────────────────────────────────────
+# ── Singleton ─────────────────────────────────────────────────────────────
 
 _manager: OpenWebuiManager | None = None
 _manager_lock = threading.Lock()

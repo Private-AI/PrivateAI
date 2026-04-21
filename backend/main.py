@@ -49,11 +49,12 @@ app = FastAPI(
 # ── CORS ──────────────────────────────────────────────────────────────────────
 
 # Build CORS allow-origins list from environment
+_is_dev = os.environ.get("PRIVATEAI_DEV_MODE", "").lower() in ("1", "true", "yes")
 _default_origins = [
     "http://localhost:3000",
     "http://frontend:3000",
     "http://localhost:8000",
-]
+] if _is_dev else []
 
 _extra_origins = os.environ.get("PRIVATEAI_CORS_ORIGINS", "")
 if _extra_origins:
@@ -61,7 +62,7 @@ if _extra_origins:
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=_default_origins,
+    allow_origins=_default_origins or ["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

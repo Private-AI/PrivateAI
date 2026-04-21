@@ -15,14 +15,38 @@ import logging
 import threading
 from pathlib import Path
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from app.providers.registry import is_test_mode
 from app.services.orchestrator import get_orchestrator
+from app.models.user import User
+from app.utils.auth import jwt, SECRET_KEY, ALGORITHM, get_user_db
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/deployments", tags=["terminal"])
+
+
+async def _get_ws_user(websocket: WebSocket) -> User:
+    """Extract and validate JWT from WebSocket query parameter."""
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str | None = payload.get("sub")
+        if user_id is None:
+            await websocket.close(code=4001, reason="Invalid token")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    user = get_user_db().get_by_id(user_id)
+    if user is None:
+        await websocket.close(code=4001, reason="User not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
 
 
 # ── Mock terminal for test mode ──────────────────────────────────────
@@ -205,8 +229,9 @@ async def terminal_ws(websocket: WebSocket, deployment_id: str):
     The frontend sends raw keystrokes; the backend relays them to the
     VM via Paramiko and streams output back.
     """
+    user = await _get_ws_user(websocket)
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record or not record.public_ip:
         await websocket.close(code=4004, reason="Deployment not found or no IP")
         return

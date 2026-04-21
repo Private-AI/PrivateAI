@@ -95,12 +95,13 @@ User C ──┘        ├── nginx :80
 
 ## Major Code Changes
 
-### 1. Authentication System (new)
+### 1. Authentication System (new + hardened)
 
 **Files added:**
 - `backend/app/routers/auth.py` — `POST /register`, `POST /login`, `GET /me`
 - `backend/app/models/user.py` — SQLite user DB with bcrypt hashes
-- `backend/app/utils/auth.py` — JWT creation/verification, password hashing
+- `backend/app/utils/auth.py` — JWT creation/verification, password hashing *(switched from passlib to native `bcrypt` to avoid a Python 3.12 self-test crash)*
+- `backend/app/utils/rate_limit.py` — Sliding-window in-memory rate limiter for auth endpoints
 - `frontend/components/AuthProvider.tsx` — React context for auth state
 - `frontend/app/login/page.tsx` — Login/Register UI
 
@@ -109,12 +110,14 @@ User C ──┘        ├── nginx :80
 - Password is hashed with bcrypt; only the hash is stored in SQLite.
 - Login returns a short-lived JWT (30 minutes).
 - All deployment endpoints are protected with `Depends(get_current_user)`.
+- **Rate limiting:** Auth endpoints are protected by a sliding-window rate limiter (5 requests / 60 seconds per IP) to prevent brute-force attacks.
+- **Secret key enforcement:** The app refuses to start if `PRIVATEAI_SECRET_KEY` is missing or shorter than 32 characters.
 
 ### 2. Client-Side Encrypted Vault (new)
 
 **Files added:**
 - `backend/app/routers/vault.py` — Store/retrieve/delete opaque encrypted blobs
-- `frontend/lib/vault.ts` — `vaultEncrypt()` / `vaultDecrypt()` using Web Crypto API
+- `frontend/lib/vault.ts` — `vaultEncrypt()` / `vaultDecrypt()` using Web Crypto API *(fixed `btoa` crash for large payloads)*
 
 **How it works:**
 1. User enters Azure credentials + SSH private key in the provision wizard.
@@ -128,7 +131,19 @@ User C ──┘        ├── nginx :80
 - A full server breach reveals only encrypted blobs. Without the user's password, they are useless.
 - The server operator cannot read Azure credentials, cannot access VMs, and cannot charge the user's account.
 
-### 3. Cost Monitor (new)
+### 3. Multi-User Isolation (new)
+
+**Files changed:**
+- `backend/app/models/deployment.py` — Added `user_id` to `DeploymentRecord`
+- `backend/app/services/deployment_store.py` — All CRUD operations filtered by `user_id`
+- `backend/app/services/orchestrator.py` — Validates ownership on every action (GET, DELETE, tunnel, logs)
+
+**How it works:**
+- Every deployment is tagged with the `user_id` of the user who created it.
+- Users can only see, manage, or delete their own deployments.
+- Attempting to access another user's deployment returns `404 Not Found` (not 403) to prevent user ID enumeration.
+
+### 4. Cost Monitor (new)
 
 **Files added:**
 - `backend/app/services/cost_monitor.py` — Background cost tracker (30-second tick)
@@ -142,7 +157,7 @@ User C ──┘        ├── nginx :80
 - Auto-shutdown stops VMs when the budget is exceeded.
 - Frontend shows a live cost bar: `$4.21 spent | $3.67/hr | 42 % of budget`.
 
-### 4. Open WebUI as External Service (changed)
+### 5. Open WebUI as External Service (changed)
 
 **Files changed:**
 - `backend/app/routers/open_webui.py` — Simplified to manage an external service instead of a subprocess
@@ -153,7 +168,7 @@ User C ──┘        ├── nginx :80
 - `main`: `OpenWebuiManager` spawns `python -c "from open_webui import app; app(['serve'])"` in a bundled venv. It runs CPU-only PyTorch and binds to `localhost:8080`.
 - `feat/hosted-demo`: Open WebUI runs in its own Docker container. The backend tells it which Ollama URL to connect to via environment variables. Multi-user mode is enabled.
 
-### 5. SSH Tunneling (new)
+### 6. SSH Tunneling (new)
 
 **Files added:**
 - `backend/app/services/ssh_tunnel.py` — Persistent SSH tunnel to remote Ollama API
@@ -162,20 +177,42 @@ User C ──┘        ├── nginx :80
 - When a deployment is active, the backend establishes a reverse or forward SSH tunnel so the local Open WebUI container can reach the remote Ollama server without exposing Ollama to the public internet.
 - Tunnel is torn down on deployment stop or switch.
 
-### 6. Deployment & Infrastructure (changed)
+### 7. SSH Key Handling (hardened)
+
+**Files added:**
+- `backend/app/utils/ssh_key.py` — Secure temporary file creation for PEM keys (`0o600` permissions)
+
+**How it works:**
+- SSH private keys are collected in the frontend and sent in the deployment payload (memory only).
+- The backend writes the key to a temporary file with strict `0o600` permissions for Paramiko to use.
+- The file is immediately deleted after the deployment is destroyed or the tunnel is closed.
+- Keys are **never** written to the SQLite database or persisted to disk long-term.
+
+### 8. WebSocket Security (new)
+
+**Files changed:**
+- `backend/app/routers/deployments.py` — Validates JWT from `token` query parameter before accepting WebSocket upgrades
+- `backend/app/routers/terminal.py` — Same JWT validation for terminal WebSockets
+
+**How it works:**
+- Standard WebSockets do not support custom headers, so the JWT is passed as a `token` query parameter.
+- The backend validates the token with the same logic as REST API requests before allowing the upgrade.
+- This prevents unauthenticated users from connecting to deployment logs or terminal sessions.
+
+### 9. Deployment & Infrastructure (changed)
 
 **Files added:**
 - `docker-compose.hosted.yml` — Production Docker Compose with nginx, frontend, backend, open-webui
 - `Dockerfile.backend` — Python 3.12 slim image for FastAPI
 - `Dockerfile.frontend` — Next.js standalone SSR image
-- `nginx/nginx.conf` — Reverse proxy routing `/api`, `/open-webui`, and root traffic
+- `nginx/nginx.conf` — Reverse proxy routing `/api`, `/open-webui`, and root traffic *(fixed WebSocket upgrade headers)*
 - `HOSTED.md` — Step-by-step VPS deployment guide
 
 **Files removed / no longer used:**
 - Electron build config (still in tree but not used in hosted path)
 - PyInstaller spec files (irrelevant for Docker deployment)
 
-### 7. Azure Provider Hardening (enhanced)
+### 10. Azure Provider Hardening (enhanced)
 
 **Files changed:**
 - `backend/app/providers/azure/provider.py` — SKU fallback loop, auto-cleanup on failure, quota-aware size filtering
@@ -188,14 +225,14 @@ User C ──┘        ├── nginx :80
 - **CPU-only path**: NVIDIA driver install is skipped on CPU VMs, preventing setup aborts.
 - **Ollama permissions**: `chown ollama:ollama` applied after Ollama installer creates the user, fixing blob directory permissions.
 
-### 8. Frontend Changes
+### 11. Frontend Changes
 
 **Files changed:**
 - `frontend/app/provision/ProvisionWizard.tsx` — Added SSH private key input, vault integration, auth-gated flow
 - `frontend/app/dashboard/Dashboard.tsx` — Added cost monitor bar, auth-aware UI
 - `frontend/app/settings/Settings.tsx` — Added budget settings, vault management
 - `frontend/app/components/Sidebar.tsx` — Added Open WebUI status widget, login/logout
-- `frontend/app/lib/api.ts` — Added auth headers, vault API helpers
+- `frontend/app/lib/api.ts` — Added auth headers, vault API helpers *(fixed to attach Bearer tokens on every request)*
 
 ---
 

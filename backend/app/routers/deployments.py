@@ -9,7 +9,7 @@ to disk. The server stores only deployment metadata.
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect, status
 
 from app.models.credentials import Credentials
 from app.models.schemas import (
@@ -57,6 +57,34 @@ def _record_to_status(record) -> DeploymentStatusResponse:  # type: ignore[no-un
     )
 
 
+def _require_owner(record, user: User) -> None:
+    if record.user_id and record.user_id != user.id:
+        raise HTTPException(status.HTTP_403_FORBIDDEN, detail="Not authorized to access this deployment")
+
+
+async def _get_ws_user(websocket: WebSocket) -> User:
+    """Extract and validate JWT from WebSocket query parameter."""
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=4001, reason="Missing authentication token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Missing token")
+    from app.utils.auth import jwt, SECRET_KEY, ALGORITHM, get_user_db
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str | None = payload.get("sub")
+        if user_id is None:
+            await websocket.close(code=4001, reason="Invalid token")
+            raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    except Exception:
+        await websocket.close(code=4001, reason="Invalid token")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    user = get_user_db().get_by_id(user_id)
+    if user is None:
+        await websocket.close(code=4001, reason="User not found")
+        raise HTTPException(status.HTTP_401_UNAUTHORIZED, detail="User not found")
+    return user
+
+
 # ── Create ───────────────────────────────────────────────────────────
 
 
@@ -76,7 +104,7 @@ async def create_deployment(
     They are NOT persisted to disk in hosted mode.
     """
     orchestrator = get_orchestrator()
-    record = await orchestrator.create_deployment(request.config, request.credentials)
+    record = await orchestrator.create_deployment(request.config, request.credentials, user_id=user.id)
     return CreateDeploymentResponse(
         id=record.id,
         status=record.status,
@@ -91,7 +119,7 @@ async def create_deployment(
 async def list_deployments(user: User = Depends(get_current_user)):
     """List all deployments for the authenticated user."""
     orchestrator = get_orchestrator()
-    records = orchestrator.store.list_all()
+    records = orchestrator.store.list_all(user_id=user.id)
     return DeploymentListResponse(deployments=[_record_to_status(r) for r in records])
 
 
@@ -103,7 +131,7 @@ async def list_deployments(user: User = Depends(get_current_user)):
 async def get_deployment(deployment_id: str, user: User = Depends(get_current_user)):
     """Get full deployment status including progress steps."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
     return _record_to_status(record)
@@ -125,11 +153,15 @@ async def get_deployment_live(
     cached from a previous operation.
     """
     orchestrator = get_orchestrator()
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
+    if not record:
+        raise HTTPException(404, detail="Deployment not found")
     if credentials:
-        orchestrator.store.update_credentials(deployment_id, credentials)
+        orchestrator.store.update_credentials(deployment_id, credentials, user_id=user.id)
     record = await orchestrator.refresh_status(deployment_id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
+    _require_owner(record, user)
     return _record_to_status(record)
 
 
@@ -198,15 +230,15 @@ async def start_deployment(
     In hosted mode, send credentials if they are not cached from create.
     """
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
 
     if credentials:
-        orchestrator.store.update_credentials(deployment_id, credentials)
+        orchestrator.store.update_credentials(deployment_id, credentials, user_id=user.id)
 
     ip = await orchestrator.start_deployment(deployment_id)
-    updated = orchestrator.store.get(deployment_id)
+    updated = orchestrator.store.get(deployment_id, user_id=user.id)
     return LifecycleResponse(
         success=ip is not None,
         status=updated.status if updated else record.status,
@@ -227,15 +259,15 @@ async def stop_deployment(
 ):
     """Deallocate a running VM (stops compute billing)."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
 
     if credentials:
-        orchestrator.store.update_credentials(deployment_id, credentials)
+        orchestrator.store.update_credentials(deployment_id, credentials, user_id=user.id)
 
     success = await orchestrator.stop_deployment(deployment_id)
-    updated = orchestrator.store.get(deployment_id)
+    updated = orchestrator.store.get(deployment_id, user_id=user.id)
     return LifecycleResponse(
         success=success,
         status=updated.status if updated else record.status,
@@ -256,12 +288,12 @@ async def set_auto_shutdown(
 ):
     """Set a daily auto-shutdown schedule (cost safety)."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
 
     if credentials:
-        orchestrator.store.update_credentials(deployment_id, credentials)
+        orchestrator.store.update_credentials(deployment_id, credentials, user_id=user.id)
 
     success = await orchestrator.set_auto_shutdown(deployment_id, request.time_utc)
     return AutoShutdownResponse(
@@ -288,7 +320,7 @@ async def destroy_deployment(
     In hosted mode, you may need to provide credentials if they are not cached.
     """
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
 
@@ -298,10 +330,10 @@ async def destroy_deployment(
                 400,
                 detail="Credential provider does not match deployment provider",
             )
-        orchestrator.store.update_credentials(deployment_id, request.credentials)
+        orchestrator.store.update_credentials(deployment_id, request.credentials, user_id=user.id)
 
     success = await orchestrator.destroy_deployment(deployment_id)
-    updated = orchestrator.store.get(deployment_id)
+    updated = orchestrator.store.get(deployment_id, user_id=user.id)
     message = (
         "Resources destroyed"
         if success
@@ -329,12 +361,12 @@ async def rerun_setup(
 ):
     """Re-run VM software setup (e.g. after a reboot for GPU drivers)."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
 
     if credentials:
-        orchestrator.store.update_credentials(deployment_id, credentials)
+        orchestrator.store.update_credentials(deployment_id, credentials, user_id=user.id)
 
     success = await orchestrator.setup_deployment(deployment_id)
     return SetupVMResponse(
@@ -361,8 +393,11 @@ async def validate_deployment(
 ):
     """Run health checks against the deployed VM."""
     orchestrator = get_orchestrator()
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
+    if not record:
+        raise HTTPException(404, detail="Deployment not found")
     if credentials:
-        orchestrator.store.update_credentials(deployment_id, credentials)
+        orchestrator.store.update_credentials(deployment_id, credentials, user_id=user.id)
     result = await orchestrator.validate_deployment(deployment_id, check_gpu)
     if "error" in result:
         raise HTTPException(404, detail=result["error"])
@@ -380,7 +415,7 @@ async def validate_deployment(
 async def list_models(deployment_id: str, user: User = Depends(get_current_user)):
     """List Ollama models installed on the VM."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record or not record.public_ip:
         raise HTTPException(404, detail="Deployment not found or no IP assigned")
 
@@ -414,7 +449,7 @@ async def pull_model(
 ):
     """Pull (download) a new Ollama model onto the VM."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record or not record.public_ip:
         raise HTTPException(404, detail="Deployment not found or no IP assigned")
 
@@ -450,7 +485,7 @@ async def delete_model(
 ):
     """Remove an Ollama model from the VM."""
     orchestrator = get_orchestrator()
-    record = orchestrator.store.get(deployment_id)
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
     if not record or not record.public_ip:
         raise HTTPException(404, detail="Deployment not found or no IP assigned")
 
@@ -484,6 +519,12 @@ async def deployment_ws(websocket: WebSocket, deployment_id: str):
     Connect to this endpoint after creating a deployment to receive
     live status updates, progress steps, and error notifications.
     """
+    user = await _get_ws_user(websocket)
+    orchestrator = get_orchestrator()
+    record = orchestrator.store.get(deployment_id, user_id=user.id)
+    if not record:
+        await websocket.close(code=4004, reason="Deployment not found")
+        return
     await ws_manager.connect(deployment_id, websocket)
     try:
         while True:

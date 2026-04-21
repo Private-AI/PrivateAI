@@ -34,6 +34,7 @@ class AzureCredentials(BaseModel):
         min_length=1,
     )
     client_secret: SecretStr = Field(..., description="Service principal client secret")
+    ssh_private_key: str = Field(default="", description="SSH private key content (PEM)")
 
 
 class GCPCredentials(BaseModel):

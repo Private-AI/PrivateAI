@@ -49,6 +49,7 @@ services:
       - PRIVATEAI_DB_PATH=/data/privateai.db
       - PRIVATEAI_CORS_ORIGINS=${PRIVATEAI_CORS_ORIGINS:-}
       - OPEN_WEBUI_URL=http://open-webui:8080
+      - PASSLIB_MAX_PASSWORD_SIZE=72
     volumes:
       - privateai-data:/data
     networks:
@@ -61,7 +62,7 @@ services:
     environment:
       - ENABLE_SIGNUP=true
       - WEBUI_AUTH=true
-      - WEBUI_SECRET_KEY=${OPEN_WEBUI_SECRET_KEY:-privateai-open-webui-secret}
+      - WEBUI_SECRET_KEY=${OPEN_WEBUI_SECRET_KEY:?Required}
       - DATA_DIR=/app/backend/data
       - OLLAMA_BASE_URLS=${OLLAMA_BASE_URLS:-}
     volumes:

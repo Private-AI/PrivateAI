@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from app.models.user import UserCreate, UserResponse, get_user_db
 from app.utils.auth import create_access_token, get_current_user, get_password_hash, verify_password
+from app.utils.rate_limit import rate_limit
 
 router = APIRouter(prefix="/api/v1/auth", tags=["auth"])
 
@@ -28,7 +29,7 @@ class RegisterResponse(BaseModel):
 
 
 @router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
-async def register(request: UserCreate):
+async def register(request: UserCreate, _rate=Depends(rate_limit())):
     """Create a new user account."""
     db = get_user_db()
     password_hash = get_password_hash(request.password)
@@ -46,10 +47,10 @@ async def register(request: UserCreate):
 
 
 @router.post("/login", response_model=TokenResponse)
-async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+async def login(form_data: OAuth2PasswordRequestForm = Depends(), _rate=Depends(rate_limit())):
     """Authenticate and return a short-lived JWT.
 
-    Use the returned `access_token` in the `Authorization: Bearer <token>`
+    Use the returned `access_token` in the `Authorization: Bearer ***
     header for all subsequent protected requests.
     """
     db = get_user_db()

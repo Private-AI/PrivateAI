@@ -28,6 +28,7 @@ export interface AzureCredentials {
   tenant_id: string;
   client_id: string;
   client_secret: string;
+  ssh_private_key?: string;
 }
 
 // ---------------------------------------------------------------------------

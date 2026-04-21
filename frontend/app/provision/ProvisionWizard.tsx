@@ -28,6 +28,8 @@ import {
   saveSettings,
   addDeploymentToHistory,
 } from "@/app/lib/storage";
+import { useAuth } from "@/components/AuthProvider";
+import { storeVault, vaultEncrypt } from "@/lib/vault";
 import type {
   AzureCredentials,
   CloudProvider,
@@ -63,6 +65,7 @@ function buildAzureCredentials(form: CredentialFormState): AzureCredentials {
     tenant_id: form.tenant_id,
     client_id: form.client_id,
     client_secret: form.client_secret,
+    ssh_private_key: form.ssh_private_key,
   };
 }
 
@@ -795,6 +798,8 @@ function DeployStep({
 // ---------------------------------------------------------------------------
 
 export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
+  const { vault, vaultLocked } = useAuth();
+
   // --- Wizard navigation ---
   const [step, setStep] = useState<WizardStep>(0);
   const completedSteps = useRef(new Set<number>());
@@ -848,14 +853,15 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
   useEffect(() => {
     const settings = getSettings();
 
-    // Pre-fill credentials if saved
-    if (settings.savedCredentials) {
+    // Pre-fill credentials from vault if unlocked
+    if (!vaultLocked && vault?.credentials) {
       setCredForm((prev) => ({
         ...prev,
-        subscription_id: settings.savedCredentials!.subscription_id,
-        tenant_id: settings.savedCredentials!.tenant_id,
-        client_id: settings.savedCredentials!.client_id,
-        client_secret: settings.savedCredentials!.client_secret,
+        subscription_id: vault.credentials!.subscription_id,
+        tenant_id: vault.credentials!.tenant_id,
+        client_id: vault.credentials!.client_id,
+        client_secret: vault.credentials!.client_secret,
+        ssh_private_key: vault.credentials!.ssh_private_key || "",
         saveCredentials: true,
       }));
     }
@@ -1004,20 +1010,30 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     }
   }, [selectedProvider, currentCredentials]);
 
-  const handleCredNext = useCallback(() => {
-    // Save credentials if checkbox is checked
+  const handleCredNext = useCallback(async () => {
+    // Save credentials to encrypted vault if checkbox is checked
     if (credForm.saveCredentials) {
-      saveSettings({
-        savedCredentials: {
-          provider: "azure",
-          subscription_id: credForm.subscription_id,
-          tenant_id: credForm.tenant_id,
-          client_id: credForm.client_id,
-          client_secret: credForm.client_secret,
-        },
-      });
-    } else {
-      saveSettings({ savedCredentials: null });
+      const password = window.prompt(
+        "Enter your PrivateAI password to encrypt and save these credentials to your vault:"
+      );
+      if (password) {
+        try {
+          const payload = JSON.stringify({
+            credentials: {
+              subscription_id: credForm.subscription_id,
+              tenant_id: credForm.tenant_id,
+              client_id: credForm.client_id,
+              client_secret: credForm.client_secret,
+              ssh_private_key: credForm.ssh_private_key,
+            },
+          });
+          const encrypted = await vaultEncrypt(payload, password);
+          await storeVault(encrypted);
+        } catch (e) {
+          console.error("Failed to save vault:", e);
+          alert("Failed to save credentials to vault. Please try again.");
+        }
+      }
     }
     completedSteps.current.add(1);
     goToStep(2);
@@ -1050,7 +1066,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
         models: [configForm.model],
       },
       provider_options: {
-        ssh_key_path: credForm.ssh_private_key ? "/tmp/privateai_ssh_key" : "~/.ssh/id_ed25519",
+        // Backend will write ssh_private_key to a temp file automatically
       },
     };
 
@@ -1073,21 +1089,21 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       // Pre-populate step lists so the UI shows pending steps immediately
       const hasDisk = disks.data > 0;
       setProvisionSteps([
-        { step: "resource_group", label: "Creating resource group",         status: "pending", detail: "" },
-        { step: "nsg",            label: "Creating security group",          status: "pending", detail: "" },
-        { step: "vnet",           label: "Creating virtual network",         status: "pending", detail: "" },
-        { step: "public_ip",      label: "Allocating public IP",             status: "pending", detail: "" },
-        { step: "nic",            label: "Creating network interface",       status: "pending", detail: "" },
-        { step: "vm",             label: "Creating virtual machine",         status: "pending", detail: "" },
-        ...(hasDisk ? [{ step: "data_disk", label: "Attaching data disk",   status: "pending" as const, detail: "" }] : []),
+        { step: "resource_group", label: "Creating resource group",         status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "nsg",            label: "Creating security group",          status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "vnet",           label: "Creating virtual network",         status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "public_ip",      label: "Allocating public IP",             status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "nic",            label: "Creating network interface",       status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "vm",             label: "Creating virtual machine",         status: "pending", detail: "", started_at: null, completed_at: null },
+        ...(hasDisk ? [{ step: "data_disk", label: "Attaching data disk",   status: "pending" as const, detail: "", started_at: null, completed_at: null }] : []),
       ]);
       setSetupSteps([
-        { step: "connect",        label: "Connecting via SSH",               status: "pending", detail: "" },
-        { step: "update_system",  label: "Updating system packages",         status: "pending", detail: "" },
-        { step: "mount_disk",     label: "Preparing model storage",          status: "pending", detail: "" },
-        { step: "nvidia_driver",  label: "NVIDIA driver (skipped on CPU)",   status: "pending", detail: "" },
-        { step: "install_ollama", label: "Installing Ollama",                status: "pending", detail: "" },
-        { step: "pull_models",    label: `Pulling ${config.setup?.models?.join(", ") ?? "models"}`, status: "pending", detail: "" },
+        { step: "connect",        label: "Connecting via SSH",               status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "update_system",  label: "Updating system packages",         status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "mount_disk",     label: "Preparing model storage",          status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "nvidia_driver",  label: "NVIDIA driver (skipped on CPU)",   status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "install_ollama", label: "Installing Ollama",                status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "pull_models",    label: `Pulling ${config.setup?.models?.join(", ") ?? "models"}`, status: "pending", detail: "", started_at: null, completed_at: null },
       ]);
 
       // Connect WebSocket for live progress

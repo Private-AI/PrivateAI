@@ -1,13 +1,16 @@
-"""Client-side encrypted credential vault.
+"use client";
 
-The server stores only opaque encrypted blobs. The encryption key is
-derived from the user's password using PBKDF2 and never leaves the browser.
-
-Algorithm:
-  - PBKDF2 (SHA-256, 100k iterations) to derive a 256-bit key from password + salt
-  - AES-256-GCM for encryption
-  - salt + iv + ciphertext stored as a single base64 string
-"""
+/**
+ * Client-side encrypted credential vault.
+ *
+ * The server stores only opaque encrypted blobs. The encryption key is
+ * derived from the user's password using PBKDF2 and never leaves the browser.
+ *
+ * Algorithm:
+ *   - PBKDF2 (SHA-256, 100k iterations) to derive a 256-bit key from password + salt
+ *   - AES-256-GCM for encryption
+ *   - salt + iv + ciphertext stored as a single base64 string
+ */
 
 const ITERATIONS = 100_000;
 const SALT_LEN = 16;
@@ -25,7 +28,7 @@ async function deriveKey(password: string, salt: Uint8Array): Promise<CryptoKey>
   return crypto.subtle.deriveKey(
     {
       name: "PBKDF2",
-      salt,
+      salt: salt.buffer as ArrayBuffer,
       iterations: ITERATIONS,
       hash: "SHA-256",
     },
@@ -57,7 +60,8 @@ export async function vaultEncrypt(plaintext: string, password: string): Promise
   combined.set(iv, salt.length);
   combined.set(new Uint8Array(ciphertext), salt.length + iv.length);
 
-  return btoa(String.fromCharCode(...combined));
+  const binary = Array.from(combined, (b) => String.fromCharCode(b)).join("");
+  return btoa(binary);
 }
 
 /**

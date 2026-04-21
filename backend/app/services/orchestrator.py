@@ -68,6 +68,7 @@ class DeploymentOrchestrator:
         self,
         config: DeploymentConfig,
         credentials: Credentials,
+        user_id: str = "",
     ) -> DeploymentRecord:
         """Create a deployment record and kick off provisioning in the
         background.
@@ -76,9 +77,19 @@ class DeploymentOrchestrator:
         The caller can poll ``GET /deployments/{id}`` or listen on the
         WebSocket for progress.
         """
-        record = self.store.create(config, credentials)
+        # Write SSH private key to temp file if provided in credentials
+        ssh_key_content = ""
+        if hasattr(credentials, "ssh_private_key"):
+            ssh_key_content = credentials.ssh_private_key or ""
+        if ssh_key_content:
+            from app.utils.ssh_key import write_temp_ssh_key
+            temp_key_path = write_temp_ssh_key(ssh_key_content)
+            config.provider_options["ssh_key_path"] = temp_key_path
+            config.provider_options["_temp_ssh_key"] = temp_key_path
+
+        record = self.store.create(config, credentials, user_id=user_id)
         self.store.set_provider_credentials(config.provider, credentials)
-        logger.info("Created deployment %s (provider=%s)", record.id, config.provider)
+        logger.info("Created deployment %s (provider=%s, user=%s)", record.id, config.provider, user_id)
 
         # Register with cost monitor
         cost_per_hour = self._get_cost_per_hour(config.vm_size)
@@ -384,6 +395,11 @@ class DeploymentOrchestrator:
                 cost_monitor = get_cost_monitor()
                 cost_monitor.stop_billing(deployment_id)
                 cost_monitor.remove_deployment(deployment_id)
+                # Clean up temp SSH key if we created one
+                temp_key = record.config.provider_options.get("_temp_ssh_key")
+                if temp_key:
+                    from app.utils.ssh_key import cleanup_temp_ssh_key
+                    cleanup_temp_ssh_key(temp_key)
             else:
                 self.store.update_status(deployment_id, DeploymentStatus.FAILED, error="Destroy failed")
             return success
