@@ -2,12 +2,16 @@
 
 All deployment operations go through the orchestrator so the router
 stays thin — just validation, serialization, and HTTP status codes.
+
+In hosted mode, credentials are sent per-request and NEVER persisted
+to disk. The server stores only deployment metadata.
 """
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, HTTPException, WebSocket, WebSocketDisconnect
 
+from app.models.credentials import Credentials
 from app.models.schemas import (
     AutoShutdownRequest,
     AutoShutdownResponse,
@@ -27,8 +31,10 @@ from app.models.schemas import (
     SetupVMResponse,
     ValidationResponse,
 )
+from app.models.user import User
 from app.services.orchestrator import get_orchestrator
 from app.services.ws_manager import ws_manager
+from app.utils.auth import get_current_user
 
 router = APIRouter(prefix="/api/v1/deployments", tags=["deployments"])
 
@@ -60,16 +66,14 @@ def _record_to_status(record) -> DeploymentStatusResponse:  # type: ignore[no-un
     status_code=202,
     responses={400: {"model": ErrorResponse}},
 )
-async def create_deployment(request: CreateDeploymentRequest):
+async def create_deployment(
+    request: CreateDeploymentRequest,
+    user: User = Depends(get_current_user),
+):
     """Start a new cloud deployment.
 
-    Accepts the full configuration and credentials in a single JSON
-    payload.  Returns immediately with a deployment ID — provisioning
-    runs in the background.
-
-    Monitor progress via:
-      - ``GET /api/v1/deployments/{id}`` (polling)
-      - ``WS /api/v1/deployments/{id}/ws`` (real-time)
+    Credentials are sent in the request body and used immediately.
+    They are NOT persisted to disk in hosted mode.
     """
     orchestrator = get_orchestrator()
     record = await orchestrator.create_deployment(request.config, request.credentials)
@@ -84,8 +88,8 @@ async def create_deployment(request: CreateDeploymentRequest):
 
 
 @router.get("", response_model=DeploymentListResponse)
-async def list_deployments():
-    """List all deployments."""
+async def list_deployments(user: User = Depends(get_current_user)):
+    """List all deployments for the authenticated user."""
     orchestrator = get_orchestrator()
     records = orchestrator.store.list_all()
     return DeploymentListResponse(deployments=[_record_to_status(r) for r in records])
@@ -96,7 +100,7 @@ async def list_deployments():
     response_model=DeploymentStatusResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def get_deployment(deployment_id: str):
+async def get_deployment(deployment_id: str, user: User = Depends(get_current_user)):
     """Get full deployment status including progress steps."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
@@ -110,13 +114,19 @@ async def get_deployment(deployment_id: str):
     response_model=DeploymentStatusResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def get_deployment_live(deployment_id: str):
+async def get_deployment_live(
+    deployment_id: str,
+    credentials: Credentials | None = None,
+    user: User = Depends(get_current_user),
+):
     """Get deployment status with a live query to the cloud provider.
 
-    This is more expensive than the cached ``GET /{id}`` — use it
-    when you need the real-time VM power state.
+    In hosted mode, you may need to provide credentials if they are not
+    cached from a previous operation.
     """
     orchestrator = get_orchestrator()
+    if credentials:
+        orchestrator.store.update_credentials(deployment_id, credentials)
     record = await orchestrator.refresh_status(deployment_id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
@@ -131,7 +141,10 @@ async def get_deployment_live(deployment_id: str):
     response_model=DestroyManagedResourcesResponse,
     responses={400: {"model": ErrorResponse}},
 )
-async def destroy_managed_resources(request: DestroyManagedResourcesRequest):
+async def destroy_managed_resources(
+    request: DestroyManagedResourcesRequest,
+    user: User = Depends(get_current_user),
+):
     """Destroy all PrivateAI-managed resource groups for a provider."""
     orchestrator = get_orchestrator()
     try:
@@ -175,12 +188,22 @@ async def destroy_managed_resources(request: DestroyManagedResourcesRequest):
     response_model=LifecycleResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def start_deployment(deployment_id: str):
-    """Start a stopped VM."""
+async def start_deployment(
+    deployment_id: str,
+    credentials: Credentials | None = None,
+    user: User = Depends(get_current_user),
+):
+    """Start a stopped VM.
+
+    In hosted mode, send credentials if they are not cached from create.
+    """
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
+
+    if credentials:
+        orchestrator.store.update_credentials(deployment_id, credentials)
 
     ip = await orchestrator.start_deployment(deployment_id)
     updated = orchestrator.store.get(deployment_id)
@@ -197,12 +220,19 @@ async def start_deployment(deployment_id: str):
     response_model=LifecycleResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def stop_deployment(deployment_id: str):
+async def stop_deployment(
+    deployment_id: str,
+    credentials: Credentials | None = None,
+    user: User = Depends(get_current_user),
+):
     """Deallocate a running VM (stops compute billing)."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
+
+    if credentials:
+        orchestrator.store.update_credentials(deployment_id, credentials)
 
     success = await orchestrator.stop_deployment(deployment_id)
     updated = orchestrator.store.get(deployment_id)
@@ -218,15 +248,20 @@ async def stop_deployment(deployment_id: str):
     response_model=AutoShutdownResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def set_auto_shutdown(deployment_id: str, request: AutoShutdownRequest):
-    """Set a daily auto-shutdown schedule (cost safety).
-
-    The VM will automatically shut down every day at the specified UTC time.
-    """
+async def set_auto_shutdown(
+    deployment_id: str,
+    request: AutoShutdownRequest,
+    credentials: Credentials | None = None,
+    user: User = Depends(get_current_user),
+):
+    """Set a daily auto-shutdown schedule (cost safety)."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
+
+    if credentials:
+        orchestrator.store.update_credentials(deployment_id, credentials)
 
     success = await orchestrator.set_auto_shutdown(deployment_id, request.time_utc)
     return AutoShutdownResponse(
@@ -245,10 +280,12 @@ async def set_auto_shutdown(deployment_id: str, request: AutoShutdownRequest):
 async def destroy_deployment(
     deployment_id: str,
     request: DestroyDeploymentRequest | None = None,
+    user: User = Depends(get_current_user),
 ):
     """Destroy all cloud resources for this deployment.
 
     This permanently deletes the resource group and everything in it.
+    In hosted mode, you may need to provide credentials if they are not cached.
     """
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
@@ -285,12 +322,19 @@ async def destroy_deployment(
     response_model=SetupVMResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def rerun_setup(deployment_id: str):
+async def rerun_setup(
+    deployment_id: str,
+    credentials: Credentials | None = None,
+    user: User = Depends(get_current_user),
+):
     """Re-run VM software setup (e.g. after a reboot for GPU drivers)."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
     if not record:
         raise HTTPException(404, detail="Deployment not found")
+
+    if credentials:
+        orchestrator.store.update_credentials(deployment_id, credentials)
 
     success = await orchestrator.setup_deployment(deployment_id)
     return SetupVMResponse(
@@ -309,9 +353,16 @@ async def rerun_setup(deployment_id: str):
     response_model=ValidationResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def validate_deployment(deployment_id: str, check_gpu: bool = False):
+async def validate_deployment(
+    deployment_id: str,
+    check_gpu: bool = False,
+    credentials: Credentials | None = None,
+    user: User = Depends(get_current_user),
+):
     """Run health checks against the deployed VM."""
     orchestrator = get_orchestrator()
+    if credentials:
+        orchestrator.store.update_credentials(deployment_id, credentials)
     result = await orchestrator.validate_deployment(deployment_id, check_gpu)
     if "error" in result:
         raise HTTPException(404, detail=result["error"])
@@ -326,7 +377,7 @@ async def validate_deployment(deployment_id: str, check_gpu: bool = False):
     response_model=ModelListResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def list_models(deployment_id: str):
+async def list_models(deployment_id: str, user: User = Depends(get_current_user)):
     """List Ollama models installed on the VM."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
@@ -356,7 +407,11 @@ async def list_models(deployment_id: str):
     response_model=PullModelResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def pull_model(deployment_id: str, request: PullModelRequest):
+async def pull_model(
+    deployment_id: str,
+    request: PullModelRequest,
+    user: User = Depends(get_current_user),
+):
     """Pull (download) a new Ollama model onto the VM."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
@@ -388,7 +443,11 @@ async def pull_model(deployment_id: str, request: PullModelRequest):
     response_model=DeleteModelResponse,
     responses={404: {"model": ErrorResponse}},
 )
-async def delete_model(deployment_id: str, model: str):
+async def delete_model(
+    deployment_id: str,
+    model: str,
+    user: User = Depends(get_current_user),
+):
     """Remove an Ollama model from the VM."""
     orchestrator = get_orchestrator()
     record = orchestrator.store.get(deployment_id)
@@ -424,22 +483,10 @@ async def deployment_ws(websocket: WebSocket, deployment_id: str):
 
     Connect to this endpoint after creating a deployment to receive
     live status updates, progress steps, and error notifications.
-
-    Message format:
-    ```json
-    {
-        "type": "provision_progress" | "setup_progress" | "status_change" | ...,
-        "step": "...",
-        "current": 1,
-        "total": 7,
-        "message": "..."
-    }
-    ```
     """
     await ws_manager.connect(deployment_id, websocket)
     try:
         while True:
-            # Keep connection alive; client can send pings
             await websocket.receive_text()
     except WebSocketDisconnect:
         ws_manager.disconnect(deployment_id, websocket)

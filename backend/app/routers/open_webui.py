@@ -1,30 +1,37 @@
-"""Open WebUI local management endpoints.
+"""Open WebUI management endpoints (hosted demo mode).
 
-Provides endpoints for:
-  - Checking Open WebUI status and health
-  - Starting / stopping the local Open WebUI process
-  - Updating configuration (Ollama URL, port, etc.) with automatic restart
-  - Reading current configuration
+In hosted mode, Open WebUI runs as an external service (Docker Compose).
+The backend only health-checks and proxies status — it does NOT spawn
+or manage the Open WebUI process.
+
+Users access Open WebUI directly at the configured URL.
 """
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from app.models.open_webui import OpenWebuiEnvConfig
 from app.models.schemas import (
     ErrorResponse,
-    OpenWebuiConfigUpdateRequest,
-    OpenWebuiConfigUpdateResponse,
-    OpenWebuiStartRequest,
     OpenWebuiStartResponse,
     OpenWebuiStatusResponse,
-    OpenWebuiStopResponse,
 )
 from app.services.open_webui_manager import get_open_webui_manager
 
 router = APIRouter(prefix="/api/v1/open-webui", tags=["open-webui"])
+
+OPEN_WEBUI_URL = os.environ.get("OPEN_WEBUI_URL", "http://localhost:8080")
+
+
+class OpenWebuiInfoResponse(BaseModel):
+    """GET /api/v1/open-webui/info — where to find Open WebUI."""
+
+    url: str
+    status: str
+    message: str
 
 
 # ── Status ───────────────────────────────────────────────────────────
@@ -32,14 +39,14 @@ router = APIRouter(prefix="/api/v1/open-webui", tags=["open-webui"])
 
 @router.get("/status", response_model=OpenWebuiStatusResponse)
 async def get_status():
-    """Get the current state of the local Open WebUI instance."""
+    """Get the current state of the external Open WebUI instance."""
     manager = get_open_webui_manager()
     return OpenWebuiStatusResponse(state=manager.get_state())
 
 
 @router.get("/health")
 async def health_check():
-    """Quick health check — is Open WebUI responding?"""
+    """Quick health check — is the external Open WebUI responding?"""
     manager = get_open_webui_manager()
     healthy = await manager.health_check()
     state = manager.get_state()
@@ -50,73 +57,30 @@ async def health_check():
     }
 
 
-# ── Lifecycle ────────────────────────────────────────────────────────
+@router.get("/info", response_model=OpenWebuiInfoResponse)
+async def get_info():
+    """Return the public URL where users can access Open WebUI.
 
-
-@router.post(
-    "/start",
-    response_model=OpenWebuiStartResponse,
-    responses={500: {"model": ErrorResponse}},
-)
-async def start_open_webui(request: OpenWebuiStartRequest | None = None):
-    """Start the local Open WebUI process.
-
-    Optionally pass a config override to change Ollama URL, port, etc.
-    If Open WebUI is already running, returns the current state.
+    In hosted mode, Open WebUI is served externally (e.g. via Nginx
+    at /open-webui or on a subdomain). This endpoint tells the frontend
+    where to redirect the user.
     """
     manager = get_open_webui_manager()
-    config = request.config if request else None
-    state = await manager.start(config)
-    return OpenWebuiStartResponse(
-        success=state.status == "running",
-        message=(
-            f"Open WebUI running at {state.url}"
-            if state.status == "running"
-            else f"Failed to start: {state.error}"
-        ),
-        state=state,
+    healthy = await manager.health_check()
+    return OpenWebuiInfoResponse(
+        url=OPEN_WEBUI_URL,
+        status="running" if healthy else "unhealthy",
+        message="Open WebUI is available at the provided URL"
+        if healthy
+        else "Open WebUI is not responding",
     )
 
 
-@router.post(
-    "/stop",
-    response_model=OpenWebuiStopResponse,
-)
-async def stop_open_webui():
-    """Stop the local Open WebUI process."""
-    manager = get_open_webui_manager()
-    await manager.stop()
-    return OpenWebuiStopResponse(
-        success=True,
-        message="Open WebUI stopped",
-    )
-
-
-@router.post(
-    "/restart",
-    response_model=OpenWebuiStartResponse,
-)
-async def restart_open_webui(request: OpenWebuiStartRequest | None = None):
-    """Restart Open WebUI, optionally with new configuration."""
-    manager = get_open_webui_manager()
-    config = request.config if request else None
-    state = await manager.restart(config)
-    return OpenWebuiStartResponse(
-        success=state.status == "running",
-        message=(
-            f"Open WebUI restarted at {state.url}"
-            if state.status == "running"
-            else f"Failed to restart: {state.error}"
-        ),
-        state=state,
-    )
-
-
-# ── Connect to deployment ─────────────────────────────────────────────
+# ── Connect to deployment ──────────────────────────────────────────────────
 
 
 class ConnectDeploymentRequest(BaseModel):
-    """POST /api/v1/open-webui/connect — connect to a deployment's Ollama."""
+    """POST /api/v1/open-webui/connect — configure Open WebUI for a deployment."""
 
     deployment_id: str = Field(..., description="Deployment ID")
     deployment_name: str = Field(default="", description="Display name")
@@ -128,12 +92,13 @@ class ConnectDeploymentRequest(BaseModel):
     responses={400: {"model": ErrorResponse}, 502: {"model": ErrorResponse}},
 )
 async def connect_to_deployment(request: ConnectDeploymentRequest):
-    """Connect Open WebUI to a deployment's Ollama server via SSH tunnel.
+    """Configure the external Open WebUI to use a deployment's Ollama.
 
-    The VM IP is read from the deployment record — never sent from the
-    frontend — so no plaintext Ollama URL crosses the wire.
+    In hosted mode, this updates the external Open WebUI's configuration
+    via its API instead of spawning a local process.
     """
     from app.services.orchestrator import get_orchestrator
+
     record = get_orchestrator().store.get(request.deployment_id)
     if not record or not record.public_ip:
         raise HTTPException(400, detail="Deployment not found or has no public IP")
@@ -157,53 +122,9 @@ async def connect_to_deployment(request: ConnectDeploymentRequest):
     return OpenWebuiStartResponse(
         success=state.status == "running",
         message=(
-            f"Open WebUI connected to {request.deployment_name} (via SSH tunnel)"
+            f"Open WebUI connected to {request.deployment_name}"
             if state.status == "running"
             else f"Failed to connect: {state.error}"
         ),
         state=state,
-    )
-
-
-# ── Configuration ────────────────────────────────────────────────────
-
-
-@router.get("/config")
-async def get_config():
-    """Get current Open WebUI environment configuration."""
-    manager = get_open_webui_manager()
-    config = manager.get_config()
-    return {"config": config}
-
-
-@router.put(
-    "/config",
-    response_model=OpenWebuiConfigUpdateResponse,
-)
-async def update_config(request: OpenWebuiConfigUpdateRequest):
-    """Update Open WebUI configuration.
-
-    If Open WebUI is currently running, it will be restarted
-    automatically with the new settings.
-    """
-    manager = get_open_webui_manager()
-    state = manager.get_state()
-    was_running = state.status == "running"
-
-    manager.set_config(request.config)
-
-    restarted = False
-    if was_running:
-        await manager.restart(request.config)
-        restarted = True
-
-    return OpenWebuiConfigUpdateResponse(
-        success=True,
-        message=(
-            "Configuration updated and Open WebUI restarted"
-            if restarted
-            else "Configuration updated"
-        ),
-        config=request.config,
-        restarted=restarted,
     )

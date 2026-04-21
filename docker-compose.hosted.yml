@@ -1,0 +1,79 @@
+# PrivateAI — Hosted Demo Deployment
+#
+# Usage:
+#   cp .env.hosted.example .env
+#   # Edit .env with your settings
+#   docker compose -f docker-compose.hosted.yml up -d
+#
+# Services:
+#   - nginx: Reverse proxy (port 80)
+#   - frontend: Next.js SSR (port 3000 internally)
+#   - backend: FastAPI (port 8000 internally)
+#   - open-webui: Open WebUI with multi-user auth (port 8080 internally)
+
+services:
+  nginx:
+    image: nginx:alpine
+    container_name: privateai-nginx
+    ports:
+      - "${HOST_PORT:-80}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on:
+      - frontend
+      - backend
+      - open-webui
+    networks:
+      - privateai-hosted
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: privateai-frontend
+    environment:
+      - NEXT_PUBLIC_API_URL=/api
+      - NEXT_PUBLIC_OPEN_WEBUI_URL=/open-webui
+    networks:
+      - privateai-hosted
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: privateai-backend
+    environment:
+      - PRIVATEAI_SECRET_KEY=${PRIVATEAI_SECRET_KEY:?Required}
+      - PRIVATEAI_DB_PATH=/data/privateai.db
+      - PRIVATEAI_CORS_ORIGINS=${PRIVATEAI_CORS_ORIGINS:-}
+      - OPEN_WEBUI_URL=http://open-webui:8080
+    volumes:
+      - privateai-data:/data
+    networks:
+      - privateai-hosted
+    restart: unless-stopped
+
+  open-webui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: privateai-open-webui
+    environment:
+      - ENABLE_SIGNUP=true
+      - WEBUI_AUTH=true
+      - WEBUI_SECRET_KEY=${OPEN_WEBUI_SECRET_KEY:-privateai-open-webui-secret}
+      - DATA_DIR=/app/backend/data
+      - OLLAMA_BASE_URLS=${OLLAMA_BASE_URLS:-}
+    volumes:
+      - open-webui-data:/app/backend/data
+    networks:
+      - privateai-hosted
+    restart: unless-stopped
+
+volumes:
+  privateai-data:
+  open-webui-data:
+
+networks:
+  privateai-hosted:
+    driver: bridge

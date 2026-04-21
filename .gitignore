@@ -23,6 +23,18 @@ backend/venv
 #Ignore the open-webui directory
 open-webui-data/
 
+# Build artifacts
+backend/dist/
+backend/build/
+frontend/dist/
+frontend/dist-electron/
+frontend/out/
+
+# Environment
+.env
+.env.local
+.env.*.local
+
 # IDE
 .vscode
 .idea

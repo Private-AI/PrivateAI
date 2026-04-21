@@ -8,15 +8,11 @@ import {
   IconChevronRight,
   IconChat,
   IconLoader,
-  IconPlay,
-  IconStop,
   IconExternalLink,
+  IconLogout,
 } from "./icons";
-import {
-  fetchOpenWebuiStatus,
-  startOpenWebui,
-  stopOpenWebui,
-} from "@/app/lib/api";
+import { fetchOpenWebuiStatus } from "@/app/lib/api";
+import { useAuth } from "@/components/AuthProvider";
 import type { OpenWebuiState } from "@/app/lib/types";
 
 const STORAGE_KEY = "privateai_sidebar_collapsed";
@@ -63,6 +59,7 @@ export default function Sidebar({
   onNavigate,
   onCollapsedChange,
 }: SidebarProps) {
+  const { user, logout } = useAuth();
   const [collapsed, setCollapsed] = useState<boolean>(false);
   const [mounted, setMounted] = useState<boolean>(false);
 
@@ -82,7 +79,6 @@ export default function Sidebar({
     });
   }, [onCollapsedChange]);
 
-  // Avoid hydration mismatch: render expanded by default, then correct on mount
   const isCollapsed = mounted ? collapsed : false;
 
   return (
@@ -132,6 +128,24 @@ export default function Sidebar({
       {/* Open WebUI status */}
       <SidebarWebUI collapsed={isCollapsed} />
 
+      {/* User + Logout */}
+      {user && (
+        <div className="border-t border-border px-3 py-2">
+          <div className="flex items-center justify-between">
+            {!isCollapsed && (
+              <span className="text-xs text-muted truncate">{user.username}</span>
+            )}
+            <button
+              onClick={logout}
+              title="Log out"
+              className="btn btn-ghost btn-icon btn-sm"
+            >
+              <IconLogout size={14} className="text-muted" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Collapse toggle */}
       <div className="border-t border-border p-2">
         <button
@@ -152,7 +166,7 @@ export default function Sidebar({
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar Open WebUI widget
+// Sidebar Open WebUI widget (hosted mode)
 // ---------------------------------------------------------------------------
 
 function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
@@ -177,23 +191,7 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
     };
   }, []);
 
-  const handleToggle = useCallback(async () => {
-    if (!state) return;
-    setActionLoading(true);
-    try {
-      if (state.status === "running") {
-        await stopOpenWebui();
-      } else {
-        await startOpenWebui();
-      }
-      const s = await fetchOpenWebuiStatus();
-      setState(s);
-    } catch {
-      // ignore
-    } finally {
-      setActionLoading(false);
-    }
-  }, [state]);
+  const openWebuiUrl = process.env.NEXT_PUBLIC_OPEN_WEBUI_URL || "http://localhost:8080";
 
   if (!state) return null;
 
@@ -207,23 +205,16 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
   if (collapsed) {
     return (
       <div className="border-t border-border p-2 flex flex-col items-center gap-1.5">
-        <button
-          onClick={handleToggle}
-          disabled={actionLoading || state.status === "not_installed"}
-          title={
-            isRunning
-              ? `Open WebUI running${state.connected_deployment_name ? ` — ${state.connected_deployment_name}` : ""}`
-              : "Start Open WebUI"
-          }
+        <a
+          href={openWebuiUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={isRunning ? "Open WebUI" : "Open WebUI (unavailable)"}
           className="btn btn-ghost btn-icon relative"
         >
-          {actionLoading ? (
-            <IconLoader size={16} className="text-[var(--muted)]" />
-          ) : (
-            <IconChat size={16} className={isRunning ? "text-[var(--accent)]" : "text-[var(--muted)]"} />
-          )}
+          <IconChat size={16} className={isRunning ? "text-[var(--accent)]" : "text-[var(--muted)]"} />
           <span className={`absolute top-0.5 right-0.5 h-2 w-2 rounded-full ${dotColor}`} />
-        </button>
+        </a>
       </div>
     );
   }
@@ -238,52 +229,26 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
           </span>
           <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
         </div>
-        <div className="flex items-center gap-1">
-          {isRunning && state.url && (
-            <a
-              href={state.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-ghost btn-icon btn-sm"
-              title="Open in browser"
-            >
-              <IconExternalLink size={12} />
-            </a>
-          )}
-          <button
-            onClick={handleToggle}
-            disabled={actionLoading || state.status === "not_installed" || state.status === "starting" || state.status === "stopping"}
-            className="btn btn-ghost btn-icon btn-sm"
-            title={isRunning ? "Stop" : "Start"}
-          >
-            {actionLoading ? (
-              <IconLoader size={12} />
-            ) : isRunning ? (
-              <IconStop size={12} className="text-[var(--error)]" />
-            ) : (
-              <IconPlay size={12} className="text-[var(--success)]" />
-            )}
-          </button>
-        </div>
+        <a
+          href={openWebuiUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="btn btn-ghost btn-icon btn-sm"
+          title="Open in browser"
+        >
+          <IconExternalLink size={12} />
+        </a>
       </div>
 
-      {/* Connected deployment */}
       {isRunning && state.connected_deployment_name && (
         <p className="text-[10px] text-[var(--muted)] truncate pl-5">
           Connected to {state.connected_deployment_name}
         </p>
       )}
 
-      {/* Error */}
       {state.status === "error" && (
         <p className="text-[10px] text-[var(--error)] truncate pl-5">
           {state.error}
-        </p>
-      )}
-
-      {state.status === "not_installed" && (
-        <p className="text-[10px] text-[var(--muted)] pl-5">
-          Not installed
         </p>
       )}
     </div>

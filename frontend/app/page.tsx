@@ -1,7 +1,9 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useRouter } from "next/navigation";
 import { getDeploymentHistory, getSettings } from "./lib/storage";
+import { useAuth } from "@/components/AuthProvider";
 import Sidebar from "./components/Sidebar";
 import WelcomeScreen from "./components/WelcomeScreen";
 import Dashboard from "./dashboard/Dashboard";
@@ -11,25 +13,33 @@ import Settings from "./settings/Settings";
 type Page = "welcome" | "dashboard" | "provision" | "settings";
 
 export default function Home() {
+  const router = useRouter();
+  const { user, isLoading } = useAuth();
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [isFirstRun, setIsFirstRun] = useState<boolean>(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(false);
   const [ready, setReady] = useState<boolean>(false);
 
   useEffect(() => {
-    const history = getDeploymentHistory();
-    const settings = getSettings();
-    const hasNoHistory = history.length === 0;
-    const hasNoCredentials = settings.savedCredentials === null;
-
-    if (hasNoHistory && hasNoCredentials) {
-      setIsFirstRun(true);
-      setCurrentPage("welcome");
-    } else {
-      setCurrentPage("dashboard");
+    if (!isLoading && !user) {
+      router.push("/login");
+      return;
     }
-    setReady(true);
-  }, []);
+    if (!isLoading && user) {
+      const history = getDeploymentHistory();
+      const settings = getSettings();
+      const hasNoHistory = history.length === 0;
+      const hasNoCredentials = settings.savedCredentials === null;
+
+      if (hasNoHistory && hasNoCredentials) {
+        setIsFirstRun(true);
+        setCurrentPage("welcome");
+      } else {
+        setCurrentPage("dashboard");
+      }
+      setReady(true);
+    }
+  }, [isLoading, user, router]);
 
   const handleNavigate = useCallback((page: string): void => {
     setCurrentPage(page as Page);
@@ -39,10 +49,15 @@ export default function Home() {
     setSidebarCollapsed(collapsed);
   }, []);
 
-  // Avoid flash of content before mount check completes
-  if (!ready) {
-    return null;
+  if (isLoading || !ready) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-neutral-950 text-neutral-400">
+        <div className="animate-pulse">Loading...</div>
+      </div>
+    );
   }
+
+  if (!user) return null;
 
   const showSidebar = currentPage !== "welcome";
 

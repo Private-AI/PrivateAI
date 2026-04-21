@@ -258,6 +258,7 @@ interface CredentialFormState {
   tenant_id: string;
   client_id: string;
   client_secret: string;
+  ssh_private_key: string;
   saveCredentials: boolean;
 }
 
@@ -322,6 +323,26 @@ function CredentialsStep({
             />
           </div>
         ))}
+
+        {/* SSH Private Key */}
+        <div>
+          <label htmlFor="ssh_private_key" className="block text-xs font-medium text-[var(--fg-secondary)] mb-1">
+            SSH Private Key
+          </label>
+          <textarea
+            id="ssh_private_key"
+            className="input font-mono text-sm w-full"
+            rows={4}
+            placeholder="-----BEGIN OPENSSH PRIVATE KEY-----\n...\n-----END OPENSSH PRIVATE KEY-----"
+            value={form.ssh_private_key}
+            onChange={(e) => onChange({ ssh_private_key: e.target.value })}
+            autoComplete="off"
+            spellCheck={false}
+          />
+          <p className="mt-1 text-xs text-[var(--muted)]">
+            Your SSH private key stays in your browser. It is never stored on the server.
+          </p>
+        </div>
       </div>
 
       {/* Validate + Setup Permissions */}
@@ -790,6 +811,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     tenant_id: "",
     client_id: "",
     client_secret: "",
+    ssh_private_key: "",
     saveCredentials: false,
   });
   const [validationResult, setValidationResult] = useState<{ valid: boolean; message: string } | null>(null);
@@ -1027,7 +1049,9 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
       setup: {
         models: [configForm.model],
       },
-      provider_options: {},
+      provider_options: {
+        ssh_key_path: credForm.ssh_private_key ? "/tmp/privateai_ssh_key" : "~/.ssh/id_ed25519",
+      },
     };
 
     try {
