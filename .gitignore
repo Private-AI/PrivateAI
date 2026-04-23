@@ -6,6 +6,7 @@
 frontend/node_modules
 frontend/.next
 frontend/out
+frontend/dist
 frontend/dist-electron
 frontend/.env.local
 frontend/.env*.local
@@ -19,6 +20,7 @@ __pycache__/
 backend/.env
 backend/.venv
 backend/venv
+backend/dist
 
 #Ignore the open-webui directory
 open-webui-data/
