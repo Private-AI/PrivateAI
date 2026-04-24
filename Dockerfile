@@ -4,6 +4,12 @@ FROM nikolaik/python-nodejs:python3.12-nodejs20
 # Set working directory
 WORKDIR /app
 
+# Install azure-cli via official Microsoft apt repository
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates curl apt-transport-https lsb-release gnupg && \
+    curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
+    apt-get clean && rm -rf /var/lib/apt/lists/*
+
 # Install Python dependencies globally (or user site) - we'll also install per-project via volume mount
 COPY backend/requirements.txt /tmp/backend-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/backend-requirements.txt 2>/dev/null || echo "No backend requirements.txt"

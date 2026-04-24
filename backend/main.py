@@ -9,7 +9,15 @@ import logging
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.routers import cost, deployments, open_webui, providers, services, terminal
+from app.routers import (
+    azure_cli,
+    cost,
+    deployments,
+    open_webui,
+    providers,
+    services,
+    terminal,
+)
 
 # ── Logging ───────────────────────────────────────────────────────────
 
@@ -45,6 +53,7 @@ app.add_middleware(
 
 # ── Routers ───────────────────────────────────────────────────────────
 
+app.include_router(azure_cli.router)
 app.include_router(cost.router)
 app.include_router(deployments.router)
 app.include_router(open_webui.router)
@@ -106,6 +115,7 @@ async def _start_open_webui(manager) -> None:
 
 @app.on_event("shutdown")
 async def _shutdown() -> None:
+    from app.services.azure_cli_auth import get_cli_auth_manager
     from app.services.cost_monitor import get_cost_monitor
     from app.services.open_webui_manager import get_open_webui_manager
     from app.services.ssh_tunnel import get_tunnel_manager
@@ -117,6 +127,9 @@ async def _shutdown() -> None:
     await manager.stop()
 
     get_tunnel_manager().stop_all()
+
+    # Clean up any in-flight Azure CLI device-code sessions
+    get_cli_auth_manager().shutdown()
 
 
 # ── Root endpoints ────────────────────────────────────────────────────

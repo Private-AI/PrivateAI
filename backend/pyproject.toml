@@ -25,4 +25,5 @@ markers = [
     "phase3: Cheap VM integration test (~$0.10/hr)",
     "phase4: Remote VM validation",
     "phase5: Full H100 production test (~$35/hr)",
+    "manual: Live manual tests requiring human interaction (e.g. Azure device-code login)",
 ]

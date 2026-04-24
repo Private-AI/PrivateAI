@@ -271,6 +271,61 @@ if (Array.isArray(body.detail)) {
 
 ---
 
+## Azure CLI Device-Code Login & One-Click Service Principal
+
+### Motivation
+
+**Problem:** The manual Azure onboarding flow required the user to perform 7 steps in the Azure portal (log in, find the subscription ID, find the tenant ID, create an App Registration, create a client secret, assign the Contributor role, copy everything into the app). This is a non-starter for non-technical users and the single largest friction point in the product.
+
+**Goal:** Reduce onboarding to *just* "log in with your Microsoft account in a browser" — everything else (App Registration, client secret, RBAC assignment) is automated.
+
+### Why the Azure Python SDK was ruled out
+
+The management SDKs (`azure-mgmt-*`) cannot create App Registrations, Service Principals, or Client Secrets — those live in Microsoft Graph / Entra ID, not in ARM. We evaluated importing `azure.cli.core` directly but rejected it because it pollutes global Python state, maintains its own on-disk token cache that corrupts under concurrent requests, and has a 200+ dependency tree that conflicts with FastAPI. See `docs/PrivateAI_Azure_cli.md` for the full evaluation.
+
+### Decision: drive the `az` CLI binary via subprocess
+
+- `azure-cli` is installed into the Docker image via the official Microsoft apt repository (`curl -sL https://aka.ms/InstallAzureCLIDeb | bash`). It is now available at `/usr/bin/az` in every container service (`backend`, `combined`, `dev`, `test`).
+- The backend shells out to `az` via `subprocess` instead of importing any of its Python modules. `az ad sp create-for-rbac --name X --role Contributor --scopes /subscriptions/…` collapses the manual steps 4/5/6 into a single atomic command.
+- Every login session runs with a fresh `AZURE_CONFIG_DIR` under `/tmp/privateai-azure-sessions/<session_id>/`. PrivateAI never reads from or writes to the host user's personal `~/.azure/` directory, so manual Azure CLI usage on the host is untouched.
+
+### Device-code flow without blocking the event loop
+
+**Problem encountered:** The first implementation used `subprocess.Popen(...).communicate(timeout=120)` to capture the device code. `communicate()` waits for the process to exit, but `az login --use-device-code` intentionally blocks for up to 15 minutes waiting for the user to authenticate. The test script hung reliably for 120 s before even showing the code.
+
+**Fix:**
+- Start `az login --use-device-code` as a background subprocess with `bufsize=1` (line-buffered) and `PYTHONUNBUFFERED=1` in its environment.
+- Drain `stdout` and `stderr` on two daemon threads into list buffers.
+- Poll the buffers every 250 ms for the regex `code\s+([A-Z0-9]+)\s+to\s+authenticate`. The code appears within ~1 s.
+- The main thread returns the device code to the HTTP caller immediately. The subprocess continues running in the background until the user authenticates or the session is cancelled.
+- `proc.poll()` is used for non-blocking liveness checks from the `/status` endpoint.
+
+### New backend API surface (`/api/v1/azure/cli/*`)
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| `POST` | `/login/start` | Spawns `az login --use-device-code`, returns `{ session_id, verification_url, user_code, message }`. |
+| `GET`  | `/login/status?session_id=…` | Non-blocking poll. `pending` → `authenticated` once the user completes the browser step. |
+| `POST` | `/provision` | Runs `az ad sp create-for-rbac` on the authenticated session. Returns a full `AzureCredentials` payload and caches it as the active Azure provider credentials so the rest of the provisioning flow works without the frontend re-sending them. |
+| `POST` | `/login/cancel?session_id=…` | Abort an in-flight login and clean up the session. |
+
+**Decision:** Use an opaque session id per login flow rather than a single global session. This prevents concurrent frontend instances (or a rapid page refresh) from clobbering each other, and lets each session own its own isolated temp config dir.
+
+**Idempotency:** Calling `/provision` twice on the same session returns the same SP credentials rather than creating a duplicate App Registration.
+
+**Garbage collection:** Sessions idle > 30 minutes are automatically cleaned up (subprocess killed, temp dir removed). The backend shutdown hook also tears down all live sessions.
+
+### Manual integration test
+
+Added `backend/tests/test_azure_cli_setup.py` (marked `@pytest.mark.manual`) that exercises the full end-to-end flow: bootstrap check → device-code login → poll → SP creation → RBAC verification → SP deletion. The test prints the device code to stdout for the user to enter in a browser and is gated behind the `manual` pytest marker so it never runs in CI.
+
+Added a new pytest marker in `backend/pyproject.toml`:
+```
+manual: Live manual tests requiring human interaction (e.g. Azure device-code login)
+```
+
+---
+
 ## Architecture Decisions
 
 | Decision | Rationale |
@@ -283,3 +338,6 @@ if (Array.isArray(body.detail)) {
 | No data disk for micro/test VMs | `data_disk_size_gb=0` avoids unnecessary cost and quota usage for test deployments. |
 | Open WebUI auto-start | Eliminates the 30s cold-start delay on first "Connect & Chat" click. |
 | No `ollama_api` in ServiceEndpoints for Azure | The URL is internal to the backend; exposing it would be misleading and a security smell. |
+| `az` CLI as subprocess, not library | The Python-importable CLI mutates global state, has a 200+ dep tree, and exposes an unstable private API. Shelling out is the officially supported interface. |
+| Isolated `AZURE_CONFIG_DIR` per session | Each device-code flow gets its own temp dir; PrivateAI never touches `~/.azure/` on the host. |
+| Session-based Azure CLI login | Concurrent frontend instances / page refreshes cannot clobber each other's in-flight logins. Idle sessions are GC'd after 30 min. |

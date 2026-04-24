@@ -350,6 +350,75 @@ class RecommendVMResponse(BaseModel):
     reason: str
 
 
+# ── Azure CLI device-code authentication ─────────────────────────────
+
+
+class AzureCliLoginStartResponse(BaseModel):
+    """POST /api/v1/azure/cli/login/start — kick off device-code login."""
+
+    session_id: str = Field(..., description="Opaque session handle — reuse for subsequent calls")
+    verification_url: str = Field(
+        ...,
+        description="URL the user opens in their browser",
+    )
+    user_code: str = Field(..., description="Code the user enters at verification_url")
+    message: str = Field(
+        default="",
+        description="Raw human-readable prompt emitted by the Azure CLI",
+    )
+
+
+class AzureCliLoginStatusResponse(BaseModel):
+    """GET /api/v1/azure/cli/login/status — poll until authenticated."""
+
+    session_id: str
+    status: str = Field(
+        ...,
+        description="pending | authenticated | failed | provisioned | expired",
+    )
+    subscription_id: str = ""
+    subscription_name: str = ""
+    tenant_id: str = ""
+    user_name: str = ""
+    error: str = ""
+
+
+class AzureCliProvisionRequest(BaseModel):
+    """POST /api/v1/azure/cli/provision — create the Service Principal."""
+
+    session_id: str = Field(..., description="Session id returned by /login/start")
+    name: str = Field(
+        default="PrivateAI-Provisioner",
+        description="Display name for the App Registration / Service Principal",
+        min_length=1,
+        max_length=128,
+    )
+    role: str = Field(
+        default="Contributor",
+        description="RBAC role to grant on the current subscription",
+    )
+
+
+class AzureCliProvisionResponse(BaseModel):
+    """Ready-to-use AzureCredentials returned after SP creation."""
+
+    session_id: str
+    status: str = "provisioned"
+    client_id: str
+    client_secret: str
+    tenant_id: str
+    subscription_id: str
+    display_name: str
+
+
+class AzureCliCancelResponse(BaseModel):
+    """POST /api/v1/azure/cli/login/cancel — abort an in-flight login."""
+
+    session_id: str
+    cancelled: bool
+    message: str = ""
+
+
 # ── Errors ───────────────────────────────────────────────────────────
 
 
