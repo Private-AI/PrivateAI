@@ -40,3 +40,23 @@ yarn-error.log*
 # OS
 .DS_Store
 Thumbs.db
+backend/build/privateai-backend/Analysis-00.toc
+backend/build/privateai-backend/base_library.zip
+backend/build/privateai-backend/EXE-00.toc
+backend/build/privateai-backend/PKG-00.toc
+backend/build/privateai-backend/privateai-backend.pkg
+backend/build/privateai-backend/PYZ-00.pyz
+backend/build/privateai-backend/PYZ-00.toc
+backend/build/privateai-backend/warn-privateai-backend.txt
+backend/build/privateai-backend/xref-privateai-backend.html
+backend/build/test-uvicorn/Analysis-00.toc
+backend/build/test-uvicorn/base_library.zip
+backend/build/test-uvicorn/COLLECT-00.toc
+backend/build/test-uvicorn/EXE-00.toc
+backend/build/test-uvicorn/PKG-00.toc
+backend/build/test-uvicorn/PYZ-00.pyz
+backend/build/test-uvicorn/PYZ-00.toc
+backend/build/test-uvicorn/test-uvicorn
+backend/build/test-uvicorn/test-uvicorn.pkg
+backend/build/test-uvicorn/warn-test-uvicorn.txt
+backend/build/test-uvicorn/xref-test-uvicorn.html
