@@ -223,7 +223,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     const effectiveKey = connectedVia ? getCredentialKey(buildAzureCredentials(credForm)) : validatedCredentialsKey;
     if (effectiveKey) {
       if (credForm.saveCredentials) {
-        saveSettings({ savedCredentials: { provider: "azure", ...buildAzureCredentials(credForm) } });
+        saveSettings({ savedCredentials: { ...buildAzureCredentials(credForm) } });
       }
     }
     setStep(2);
