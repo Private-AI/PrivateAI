@@ -17,10 +17,22 @@ import type {
 // Base URLs
 // ---------------------------------------------------------------------------
 
-export const API_URL =
-  process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+const CONFIGURED_API_URL = process.env.NEXT_PUBLIC_API_URL?.trim() ?? "";
 
-export const WS_URL = API_URL.replace(/^http/, "ws");
+function getBrowserOrigin(): string {
+  if (typeof window === "undefined") return "";
+  return window.location.origin;
+}
+
+export function getApiBaseUrl(): string {
+  return CONFIGURED_API_URL || "";
+}
+
+export function getWebSocketBaseUrl(): string {
+  if (CONFIGURED_API_URL) return CONFIGURED_API_URL.replace(/^http/, "ws");
+  const origin = getBrowserOrigin();
+  return origin ? origin.replace(/^http/, "ws") : "";
+}
 
 const V1 = "/api/v1";
 
@@ -32,7 +44,7 @@ async function request<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const url = `${API_URL}${V1}${path}`;
+  const url = `${getApiBaseUrl()}${V1}${path}`;
 
   const res = await fetch(url, {
     headers: {
@@ -65,7 +77,7 @@ async function requestRoot<T>(
   path: string,
   options: RequestInit = {},
 ): Promise<T> {
-  const url = `${API_URL}${path}`;
+  const url = `${getApiBaseUrl()}${path}`;
 
   const res = await fetch(url, {
     headers: {
@@ -431,7 +443,7 @@ export function deleteModel(
 // ---------------------------------------------------------------------------
 
 export function connectDeploymentWS(id: string): WebSocket {
-  const url = `${WS_URL}${V1}/deployments/${id}/ws`;
+  const url = `${getWebSocketBaseUrl()}${V1}/deployments/${id}/ws`;
   return new WebSocket(url);
 }
 

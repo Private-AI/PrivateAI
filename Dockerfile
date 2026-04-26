@@ -1,48 +1,50 @@
-# Use the Python+Node.js image
 FROM nikolaik/python-nodejs:python3.12-nodejs20
 
-# Set working directory
 WORKDIR /app
 
-# Install azure-cli via official Microsoft apt repository
+ENV PYTHONUNBUFFERED=1 \
+    PYTHONPATH=/app/backend \
+    BACKEND_HOST=127.0.0.1 \
+    BACKEND_PORT=8000 \
+    OPEN_WEBUI_VENV=/opt/open-webui-env \
+    OPEN_WEBUI_DATA_DIR=/app/open-webui-data \
+    OPEN_WEBUI_PORT=8080 \
+    PUBLIC_OPEN_WEBUI_URL=/open-webui
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates curl apt-transport-https lsb-release gnupg && \
     curl -sL https://aka.ms/InstallAzureCLIDeb | bash && \
     apt-get clean && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies globally (or user site) - we'll also install per-project via volume mount
 COPY backend/requirements.txt /tmp/backend-requirements.txt
-RUN pip install --no-cache-dir -r /tmp/backend-requirements.txt 2>/dev/null || echo "No backend requirements.txt"
+RUN pip install --no-cache-dir -r /tmp/backend-requirements.txt
 
-# Install Node.js dependencies globally (optional)
-COPY frontend/package.json frontend/package-lock.json* /tmp/frontend/
-RUN if [ -f /tmp/frontend/package.json ]; then \
-      cd /tmp/frontend && npm ci --omit=dev 2>/dev/null || npm install --omit=dev; \
-    fi
+COPY frontend/package.json frontend/package-lock.json /app/frontend/
+WORKDIR /app/frontend
+RUN npm ci
 
-# ── Open WebUI isolated venv ────────────────────────────────────────
-# Install uv (fast Python package manager)
+WORKDIR /app
 RUN pip install --no-cache-dir uv
 
-# Create isolated venv for Open WebUI
 RUN uv venv /opt/open-webui-env --python 3.12
 
-# Install CPU-only PyTorch first (avoids ~2GB of CUDA/NVIDIA bloat)
 RUN uv pip install \
       --python /opt/open-webui-env/bin/python \
       torch \
       --index-url https://download.pytorch.org/whl/cpu
 
-# Install open-webui into the isolated venv
 RUN uv pip install \
       --python /opt/open-webui-env/bin/python \
       open-webui
 
-# Create data directory for Open WebUI persistence
-RUN mkdir -p /app/open-webui-data
+COPY backend /app/backend
+COPY frontend /app/frontend
+COPY start-prod.sh /app/start-prod.sh
 
-# Create directory structure
-RUN mkdir -p /app/frontend /app/backend
+RUN chmod +x /app/start-prod.sh && \
+    mkdir -p /app/open-webui-data && \
+    cd /app/frontend && npm run build
 
-# Default command: start an interactive shell
-CMD ["/bin/bash"]
+EXPOSE 3000
+
+CMD ["/app/start-prod.sh"]

@@ -1,10 +1,11 @@
 """PrivateAI Backend — FastAPI application entry point.
 
 Run with:
-    uvicorn main:app --reload --host 0.0.0.0 --port 8000
+    uvicorn main:app --host 127.0.0.1 --port 8000
 """
 
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,13 +40,20 @@ app = FastAPI(
 
 # ── CORS ──────────────────────────────────────────────────────────────
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+
+def _cors_allow_origins() -> list[str]:
+    raw = os.environ.get("CORS_ALLOW_ORIGINS", "").strip()
+    if raw:
+        return [origin.strip() for origin in raw.split(",") if origin.strip()]
+    return [
         "http://localhost:3000",  # Next.js dev server
         "http://frontend:3000",  # Docker compose
         "http://localhost:8000",  # Swagger UI
-    ],
+    ]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_cors_allow_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

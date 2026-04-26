@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { IconX, IconExternalLink, IconLoader } from "./icons";
-import { WS_URL } from "@/app/lib/api";
+import { getWebSocketBaseUrl } from "@/app/lib/api";
 
 interface TerminalPanelProps {
   deploymentId: string;
@@ -81,7 +81,7 @@ export default function TerminalPanel({
     termRef.current = term;
 
     // Connect WebSocket
-    const wsUrl = `${WS_URL}/api/v1/deployments/${deploymentId}/terminal`;
+    const wsUrl = `${getWebSocketBaseUrl()}/api/v1/deployments/${deploymentId}/terminal`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
 

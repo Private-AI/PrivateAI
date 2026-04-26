@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
+    "start": "node server.cjs",
     "lint": "eslint",
     "electron:build": "tsc -p tsconfig.electron.json",
     "electron:watch": "tsc -p tsconfig.electron.json --watch",

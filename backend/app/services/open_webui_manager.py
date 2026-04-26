@@ -36,6 +36,13 @@ HEALTH_CHECK_INTERVAL = 10
 STARTUP_TIMEOUT = 240
 
 
+def _public_open_webui_url(port: int) -> str:
+    public_url = os.environ.get("PUBLIC_OPEN_WEBUI_URL", "").strip()
+    if public_url:
+        return public_url
+    return f"http://localhost:{port}"
+
+
 class OpenWebuiManager:
     """Singleton that owns the Open WebUI subprocess."""
 
@@ -85,7 +92,7 @@ class OpenWebuiManager:
             return OpenWebuiState(
                 status=self._status,
                 pid=self._process.pid if self._process else None,
-                url=f"http://localhost:{self._config.port}"
+                url=_public_open_webui_url(self._config.port)
                 if self._status == OpenWebuiStatus.RUNNING
                 else "",
                 config=self._config.model_copy(),

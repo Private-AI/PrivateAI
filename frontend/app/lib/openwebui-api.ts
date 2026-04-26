@@ -24,7 +24,7 @@ export interface OWConversation {
 const LOCAL_EMAIL = 'privateai@local';
 const LOCAL_PASS = 'privateai-local-only-2024';
 const TOKEN_KEY_PREFIX = 'privateai_ow_token:';
-const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const BACKEND_URL = process.env.NEXT_PUBLIC_API_URL?.trim() ?? '';
 
 function tokenKey(baseUrl: string): string {
   return TOKEN_KEY_PREFIX + baseUrl;
