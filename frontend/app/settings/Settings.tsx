@@ -294,6 +294,7 @@ export default function Settings({ onNavigate: _onNavigate }: SettingsProps) {
         port: parseInt(webuiPort) || 8080,
         data_dir: "/app/open-webui-data",
         webui_name: webuiName,
+        webui_auth: false,
         enable_signup: webuiEnableSignup,
         default_models: webuiDefaultModels,
         webui_secret_key: "privateai-secret-key",
