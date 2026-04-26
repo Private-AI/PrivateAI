@@ -41,7 +41,8 @@ COPY backend /app/backend
 COPY frontend /app/frontend
 COPY start-prod.sh /app/start-prod.sh
 
-RUN chmod +x /app/start-prod.sh && \
+RUN sed -i 's/\r//' /app/start-prod.sh && \
+    chmod +x /app/start-prod.sh && \
     mkdir -p /app/open-webui-data && \
     cd /app/frontend && npm run build
 
