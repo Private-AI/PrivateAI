@@ -165,6 +165,59 @@ async def connect_to_deployment(request: ConnectDeploymentRequest):
     )
 
 
+# ── Auth token ───────────────────────────────────────────────────────
+
+
+@router.get("/token")
+async def get_auth_token():
+    """Return a short-lived JWT for Open WebUI API access.
+
+    The backend acquires the token from Open WebUI directly (localhost)
+    so the browser never has to deal with CORS on the auth endpoints.
+    """
+    import httpx
+
+    manager = get_open_webui_manager()
+    state = manager.get_state()
+    if state.status != "running":
+        raise HTTPException(503, detail="Open WebUI is not running")
+
+    port = state.config.port
+    email = "privateai@local"
+    password = "privateai-local-only-2024"
+
+    async with httpx.AsyncClient() as client:
+        # Try signup first (creates admin on fresh instance)
+        try:
+            r = await client.post(
+                f"http://localhost:{port}/api/v1/auths/signup",
+                json={"name": "PrivateAI", "email": email, "password": password},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                token = r.json().get("token")
+                if token:
+                    return {"token": token}
+        except Exception:
+            pass
+
+        # Signup failed (user exists or disabled) — try signin
+        try:
+            r = await client.post(
+                f"http://localhost:{port}/api/v1/auths/signin",
+                json={"email": email, "password": password},
+                timeout=10,
+            )
+            if r.status_code == 200:
+                token = r.json().get("token")
+                if token:
+                    return {"token": token}
+        except Exception:
+            pass
+
+    raise HTTPException(502, detail="Could not acquire Open WebUI token")
+
+
 # ── Configuration ────────────────────────────────────────────────────
 
 

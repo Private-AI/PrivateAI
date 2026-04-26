@@ -2,7 +2,10 @@
   "permissions": {
     "allow": [
       "Bash(docker compose up *)",
-      "Bash(git fetch *)"
+      "Bash(git fetch *)",
+      "Bash(npx tsc *)",
+      "WebFetch(domain:docs.openwebui.com)",
+      "PowerShell(docker exec privateai-combined *)"
     ]
   }
 }

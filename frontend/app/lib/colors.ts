@@ -1,0 +1,15 @@
+export const COLORS = {
+  bg: '#07091a',
+  bgCard: 'rgba(255,255,255,0.035)',
+  bgCardHover: 'rgba(255,255,255,0.065)',
+  border: 'rgba(255,255,255,0.08)',
+  borderHover: 'rgba(255,255,255,0.18)',
+  indigo: '#6366f1',
+  indigoLight: '#818cf8',
+  teal: '#2dd4bf',
+  tealDark: '#14b8a6',
+  lavender: '#a78bfa',
+  textPrimary: '#eef0ff',
+  textSecondary: '#8b92b8',
+  textMuted: '#4b5280',
+} as const;

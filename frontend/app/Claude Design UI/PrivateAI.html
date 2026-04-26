@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PrivateAI - Your AI. Completely private.</title>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet"/>
+<script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+<script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+<style>
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body, #root { height: 100%; }
+  body { background: #07091a; font-family: 'DM Sans', sans-serif; color: #eef0ff; -webkit-font-smoothing: antialiased; }
+  ::-webkit-scrollbar { width: 6px; } 
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 3px; }
+  ::placeholder { color: rgba(139,146,184,0.5); }
+  textarea, input { color-scheme: dark; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" src="components/ui.jsx"></script>
+<script type="text/babel" src="components/landing.jsx"></script>
+<script type="text/babel" src="components/wizard.jsx"></script>
+<script type="text/babel" src="components/complete.jsx"></script>
+<script type="text/babel" src="components/chat.jsx"></script>
+<script type="text/babel" src="tweaks-panel.jsx"></script>
+<script type="text/babel">
+
+const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
+  "accentColor": "#6366f1",
+  "heroSize": 72,
+  "showPrivacyBadge": true,
+  "roundness": 16
+}/*EDITMODE-END*/;
+
+function App() {
+  const [t, setTweak] = useTweaks(TWEAK_DEFAULTS);
+
+  const [screen, setScreen] = React.useState('landing');
+  const [wizardStep, setWizardStep] = React.useState(0);
+  const [selectedProvider, setSelectedProvider] = React.useState(null);
+
+  const goTo = (s) => { setScreen(s); window.scrollTo(0, 0); };
+
+  const handleHowItWorks = () => {
+    const el = document.getElementById('how-it-works');
+    if (el) el.scrollIntoView({ behavior: 'smooth' });
+  };
+
+  const renderScreen = () => {
+    if (screen === 'landing') {
+      return <LandingScreen onGetStarted={() => { setWizardStep(0); goTo('wizard'); }} onHowItWorks={handleHowItWorks} />;
+    }
+    if (screen === 'wizard') {
+      if (wizardStep === 0) return <WizardStep1 onNext={() => setWizardStep(1)} selected={selectedProvider} setSelected={setSelectedProvider}/>;
+      if (wizardStep === 1) return <WizardStep2 onNext={() => setWizardStep(2)} onBack={() => setWizardStep(0)}/>;
+      if (wizardStep === 2) return <WizardStep3 onNext={() => setWizardStep(3)} onBack={() => setWizardStep(1)}/>;
+      if (wizardStep === 3) return <WizardStep4 onComplete={() => goTo('complete')}/>;
+    }
+    if (screen === 'complete') return <CompleteScreen onStartChat={() => goTo('chat')}/>;
+    if (screen === 'chat') return <ChatScreen onBack={() => goTo('landing')}/>;
+  };
+
+  return (
+    <>
+      {renderScreen()}
+      <TweaksPanel>
+        <TweakSection label="Visual"/>
+        <TweakColor  label="Accent colour" value={t.accentColor} onChange={v => setTweak('accentColor', v)}/>
+        <TweakSlider label="Hero headline"  value={t.heroSize}   min={48} max={96} step={4} unit="px" onChange={v => setTweak('heroSize', v)}/>
+        <TweakSlider label="Card roundness" value={t.roundness}  min={4}  max={32} step={2} unit="px" onChange={v => setTweak('roundness', v)}/>
+        <TweakSection label="Features"/>
+        <TweakToggle label="Privacy badge in chat" value={t.showPrivacyBadge} onChange={v => setTweak('showPrivacyBadge', v)}/>
+        <TweakSection label="Navigate"/>
+        <TweakButton label="Landing page"        onClick={() => { goTo('landing'); setWizardStep(0); }}/>
+        <TweakButton label="Wizard: Cloud"       onClick={() => { goTo('wizard'); setWizardStep(0); }}/>
+        <TweakButton label="Wizard: Credentials" onClick={() => { goTo('wizard'); setWizardStep(1); }}/>
+        <TweakButton label="Wizard: Configure"   onClick={() => { goTo('wizard'); setWizardStep(2); }}/>
+        <TweakButton label="Wizard: Deploying"   onClick={() => { goTo('wizard'); setWizardStep(3); }}/>
+        <TweakButton label="Setup complete"      onClick={() => goTo('complete')}/>
+        <TweakButton label="Chat UI"             onClick={() => goTo('chat')}/>
+      </TweaksPanel>
+    </>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById('root'));
+root.render(<App/>);
+</script>
+</body>
+</html>

@@ -21,7 +21,8 @@ import {
   useCostMonitor,
 } from "@/app/components/cost/CostMonitor";
 import TerminalPanel from "@/app/components/TerminalPanel";
-import WebUIPanel from "@/app/components/WebUIPanel";
+import ChatPanel from "@/app/components/ChatPanel";
+import { COLORS } from "@/app/lib/colors";
 import {
   connectOpenWebuiToDeployment,
   deleteModel,
@@ -30,6 +31,7 @@ import {
   fetchDeploymentLive,
   fetchDeployments,
   fetchOpenWebuiStatus,
+  startOpenWebui,
   listModels,
   pullModel,
   startDeployment,
@@ -50,7 +52,7 @@ import type {
 } from "@/app/lib/types";
 
 // ---------------------------------------------------------------------------
-// Merged view model -- superset of Deployment & DeploymentHistoryEntry
+// View model
 // ---------------------------------------------------------------------------
 
 interface DeploymentView {
@@ -82,29 +84,8 @@ function deploymentToView(d: Deployment): DeploymentView {
 }
 
 // ---------------------------------------------------------------------------
-// Status helpers
+// Helpers
 // ---------------------------------------------------------------------------
-
-function statusBadgeClass(status: DeploymentStatus): string {
-  switch (status) {
-    case "running":
-      return "badge badge-success";
-    case "stopped":
-    case "stopping":
-      return "badge badge-warning";
-    case "failed":
-      return "badge badge-error";
-    case "provisioning":
-    case "configuring":
-    case "starting":
-      return "badge badge-accent";
-    case "destroying":
-    case "destroyed":
-    case "pending":
-    default:
-      return "badge badge-muted";
-  }
-}
 
 function statusLabel(status: DeploymentStatus): string {
   return status.charAt(0).toUpperCase() + status.slice(1);
@@ -120,10 +101,6 @@ function isTransient(status: DeploymentStatus): boolean {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Relative time
-// ---------------------------------------------------------------------------
-
 function relativeTime(iso: string): string {
   const diff = Date.now() - new Date(iso).getTime();
   const seconds = Math.floor(diff / 1000);
@@ -136,17 +113,10 @@ function relativeTime(iso: string): string {
   return `${days}d ago`;
 }
 
-// ---------------------------------------------------------------------------
-// Null endpoints constant
-// ---------------------------------------------------------------------------
-
-const EMPTY_ENDPOINTS: ServiceEndpoints = {
-  ssh: null,
-  ollama_api: null,
-};
+const EMPTY_ENDPOINTS: ServiceEndpoints = { ssh: null, ollama_api: null };
 
 // ---------------------------------------------------------------------------
-// Copy button with tooltip
+// Copy button
 // ---------------------------------------------------------------------------
 
 function CopyButton({ text }: { text: string }) {
@@ -161,20 +131,11 @@ function CopyButton({ text }: { text: string }) {
     });
   }, [text]);
 
-  useEffect(() => {
-    return () => {
-      if (timeoutRef.current) clearTimeout(timeoutRef.current);
-    };
-  }, []);
+  useEffect(() => () => { if (timeoutRef.current) clearTimeout(timeoutRef.current); }, []);
 
   return (
     <span className="relative inline-flex">
-      <button
-        type="button"
-        onClick={handleCopy}
-        className="btn btn-ghost btn-icon btn-sm"
-        aria-label="Copy to clipboard"
-      >
+      <button type="button" onClick={handleCopy} className="btn btn-ghost btn-icon btn-sm" aria-label="Copy">
         <IconCopy size={14} />
       </button>
       {copied && (
@@ -187,7 +148,7 @@ function CopyButton({ text }: { text: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Model manager panel (shown inside a running deployment card)
+// Model manager
 // ---------------------------------------------------------------------------
 
 function formatModelSize(bytes: number): string {
@@ -209,8 +170,7 @@ function ModelManager({ deploymentId }: { deploymentId: string }) {
     setLoading(true);
     setError(null);
     try {
-      const data = await listModels(deploymentId);
-      setModels(data);
+      setModels(await listModels(deploymentId));
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to load models");
     } finally {
@@ -218,9 +178,7 @@ function ModelManager({ deploymentId }: { deploymentId: string }) {
     }
   }, [deploymentId]);
 
-  useEffect(() => {
-    if (open) loadModels();
-  }, [open, loadModels]);
+  useEffect(() => { if (open) loadModels(); }, [open, loadModels]);
 
   const handlePull = useCallback(async () => {
     if (!pullInput.trim()) return;
@@ -239,7 +197,6 @@ function ModelManager({ deploymentId }: { deploymentId: string }) {
 
   const handleDelete = useCallback(async (model: string) => {
     setDeletingModel(model);
-    setError(null);
     try {
       await deleteModel(deploymentId, model);
       setModels((prev) => prev.filter((m) => m.name !== model));
@@ -251,21 +208,25 @@ function ModelManager({ deploymentId }: { deploymentId: string }) {
   }, [deploymentId]);
 
   return (
-    <div className="border-t border-[var(--border-color)] pt-3">
+    <div style={{ borderTop: `1px solid ${COLORS.border}`, paddingTop: 14, marginTop: 8 }}>
       <button
         type="button"
-        className="flex items-center gap-2 text-xs font-medium text-[var(--fg-secondary)] hover:text-[var(--fg)] transition-colors"
         onClick={() => setOpen((o) => !o)}
+        style={{
+          display: "flex", alignItems: "center", gap: 8,
+          background: "none", border: "none", cursor: "pointer",
+          color: COLORS.textMuted, fontSize: 11, fontWeight: 700,
+          letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "inherit",
+        }}
       >
-        <IconServer size={13} />
-        Models {models.length > 0 && !open ? `(${models.length})` : ""}
-        <span className="ml-auto text-[var(--muted)]">{open ? "▲" : "▼"}</span>
+        <IconServer size={12} style={{ color: COLORS.textMuted }} />
+        Models{models.length > 0 && !open ? ` (${models.length})` : ""}
+        <span style={{ marginLeft: "auto", fontSize: 10 }}>{open ? "▲" : "▼"}</span>
       </button>
 
       {open && (
-        <div className="mt-3 flex flex-col gap-3">
-          {/* Pull new model */}
-          <div className="flex gap-2">
+        <div style={{ marginTop: 12, display: "flex", flexDirection: "column", gap: 10 }}>
+          <div style={{ display: "flex", gap: 8 }}>
             <input
               type="text"
               className="input text-xs font-mono flex-1"
@@ -275,63 +236,35 @@ function ModelManager({ deploymentId }: { deploymentId: string }) {
               onKeyDown={(e) => e.key === "Enter" && handlePull()}
               spellCheck={false}
             />
-            <button
-              type="button"
-              className="btn btn-primary btn-sm"
-              disabled={pulling || !pullInput.trim()}
-              onClick={handlePull}
-            >
+            <button type="button" className="btn btn-primary btn-sm" disabled={pulling || !pullInput.trim()} onClick={handlePull}>
               {pulling ? <IconLoader size={13} /> : <IconPlus size={13} />}
               Pull
             </button>
           </div>
-
-          {error && (
-            <p className="text-xs text-[var(--error)]">{error}</p>
-          )}
-
-          {/* Model list */}
-          {loading && (
-            <div className="flex items-center gap-2 text-xs text-[var(--muted)]">
-              <IconLoader size={13} /> Loading models…
-            </div>
-          )}
-          {!loading && models.length === 0 && (
-            <p className="text-xs text-[var(--muted)]">No models installed yet.</p>
-          )}
+          {error && <p className="text-xs text-[var(--error)]">{error}</p>}
+          {loading && <div className="flex items-center gap-2 text-xs text-[var(--muted)]"><IconLoader size={13} /> Loading…</div>}
+          {!loading && models.length === 0 && <p className="text-xs text-[var(--muted)]">No models installed yet.</p>}
           {models.map((m) => (
-            <div
-              key={m.name}
-              className="flex items-center justify-between gap-2 rounded bg-[var(--bg)] px-3 py-2"
-            >
+            <div key={m.name} className="flex items-center justify-between gap-2 rounded bg-[var(--bg)] px-3 py-2">
               <div className="flex flex-col min-w-0">
                 <span className="text-xs font-mono text-[var(--fg)] truncate">{m.name}</span>
                 {m.size > 0 && (
                   <span className="text-[10px] text-[var(--muted)]">
-                    {formatModelSize(m.size)}
-                    {m.details?.parameter_size ? ` · ${m.details.parameter_size}` : ""}
+                    {formatModelSize(m.size)}{m.details?.parameter_size ? ` · ${m.details.parameter_size}` : ""}
                   </span>
                 )}
               </div>
               <button
                 type="button"
-                className="btn btn-ghost btn-icon btn-sm text-[var(--error)] hover:text-[var(--error)] shrink-0"
+                className="btn btn-ghost btn-icon btn-sm text-[var(--error)] shrink-0"
                 disabled={deletingModel === m.name}
                 onClick={() => handleDelete(m.name)}
-                aria-label={`Delete ${m.name}`}
-                title="Delete model"
               >
                 {deletingModel === m.name ? <IconLoader size={13} /> : <IconTrash size={13} />}
               </button>
             </div>
           ))}
-
-          <button
-            type="button"
-            className="btn btn-ghost btn-sm self-start"
-            disabled={loading}
-            onClick={loadModels}
-          >
+          <button type="button" className="btn btn-ghost btn-sm self-start" disabled={loading} onClick={loadModels}>
             <IconRefresh size={13} className={loading ? "animate-spin" : ""} />
             Refresh
           </button>
@@ -342,40 +275,58 @@ function ModelManager({ deploymentId }: { deploymentId: string }) {
 }
 
 // ---------------------------------------------------------------------------
-// Empty state
+// Provider badge
 // ---------------------------------------------------------------------------
 
-function EmptyState({ onNavigate }: { onNavigate: (page: string) => void }) {
+function ProviderBadge({ provider }: { provider: string }) {
+  const map: Record<string, { label: string; color: string }> = {
+    azure: { label: "Azure", color: "#0078d4" },
+    aws:   { label: "AWS",   color: "#ff9900" },
+    gcp:   { label: "GCP",   color: "#4285f4" },
+  };
+  const { label, color } = map[provider.toLowerCase()] ?? { label: provider.toUpperCase(), color: "#6b7280" };
   return (
-    <div className="flex items-center justify-center py-24">
-      <div className="card flex flex-col items-center gap-4 px-12 py-10 text-center">
-        <IconServer size={48} className="text-[var(--muted)]" />
-        <h2 className="text-lg font-semibold text-[var(--fg)]">
-          No deployments yet
-        </h2>
-        <p className="text-sm text-[var(--muted)]">
-          Deploy your first private AI infrastructure
-        </p>
-        <button
-          type="button"
-          className="btn btn-primary mt-2"
-          onClick={() => onNavigate("provision")}
-        >
-          <IconPlus size={16} />
-          Create Deployment
-        </button>
-      </div>
-    </div>
+    <span style={{
+      fontSize: 10, fontWeight: 700, color,
+      background: `${color}20`, border: `1px solid ${color}35`,
+      borderRadius: 4, padding: "2px 7px", letterSpacing: "0.04em",
+    }}>
+      {label}
+    </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// Deployment card
+// Status pill
 // ---------------------------------------------------------------------------
 
-interface CardProps {
-  deployment: DeploymentView;
-  index: number;
+function StatusPill({ status }: { status: DeploymentStatus }) {
+  const color = status === "running" ? "#4ade80"
+    : status === "failed" ? "#f87171"
+    : isTransient(status) ? COLORS.indigoLight
+    : "#94a3b8";
+  return (
+    <span style={{
+      display: "inline-flex", alignItems: "center", gap: 5,
+      fontSize: 11, fontWeight: 600, color,
+      background: `${color}15`, border: `1px solid ${color}30`,
+      borderRadius: 100, padding: "3px 10px",
+    }}>
+      <span style={{
+        width: 6, height: 6, borderRadius: "50%", background: color, flexShrink: 0,
+        boxShadow: status === "running" ? `0 0 6px ${color}` : "none",
+        animation: isTransient(status) ? "pulse-core 1.5s infinite" : "none",
+      }} />
+      {statusLabel(status)}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared card action types
+// ---------------------------------------------------------------------------
+
+interface CardActions {
   onRefresh: (id: string) => Promise<void>;
   onStart: (id: string) => Promise<void>;
   onStop: (id: string) => Promise<void>;
@@ -387,239 +338,416 @@ interface CardProps {
   loadingAction: string | null;
 }
 
-function DeploymentCard({
-  deployment: d,
-  index,
-  onRefresh,
-  onStart,
-  onStop,
-  onDestroy,
-  onOpenTerminal,
-  onOpenChat,
-  chatLoadingId,
-  connectedDeploymentId,
-  loadingAction,
-}: CardProps) {
-  const sshCommand = d.public_ip ? `ssh root@${d.public_ip}` : null;
+// ---------------------------------------------------------------------------
+// Featured deployment card (primary / first running)
+// ---------------------------------------------------------------------------
+
+function FeaturedCard({ d, actions }: { d: DeploymentView; actions: CardActions }) {
+  const { onRefresh, onStart, onStop, onDestroy, onOpenTerminal, onOpenChat,
+          chatLoadingId, connectedDeploymentId, loadingAction } = actions;
+
   const canChat = d.status === "running" && !!d.public_ip;
   const isConnected = connectedDeploymentId === d.id;
   const isChatLoading = chatLoadingId === d.id;
-  const pulsing = d.status === "provisioning" || d.status === "configuring";
+  const transient = isTransient(d.status);
+  const sshCommand = d.public_ip ? `ssh azureuser@${d.public_ip}` : null;
 
   return (
-    <div
-      className="card p-5 flex flex-col gap-3"
-      style={{
-        animation: `fade-in 0.2s ease-out ${index * 0.05}s both`,
-      }}
-    >
-      {/* Top row: name + status */}
-      <div className="flex items-center justify-between gap-3">
-        <h3 className="truncate text-sm font-semibold text-[var(--fg)]">
-          {d.name}
-        </h3>
-        <span
-          className={`${statusBadgeClass(d.status)} shrink-0 ${
-            pulsing ? "animate-[pulse-subtle_2s_ease-in-out_infinite]" : ""
-          }`}
-        >
-          {statusLabel(d.status)}
-        </span>
+    <div style={{
+      background: "linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(45,212,191,0.05) 100%)",
+      border: "1px solid rgba(99,102,241,0.25)",
+      borderRadius: 20, padding: "28px 32px",
+      position: "relative", overflow: "hidden",
+    }}>
+      {/* Radial glow */}
+      <div style={{
+        position: "absolute", top: -60, right: -60, width: 220, height: 220,
+        background: "radial-gradient(circle, rgba(99,102,241,0.15) 0%, transparent 70%)",
+        pointerEvents: "none",
+      }} />
+
+      <div style={{ fontSize: 10, color: COLORS.indigo, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", marginBottom: 20, opacity: 0.8 }}>
+        Active instance
       </div>
 
-      {/* Provider / region / size */}
-      <p className="text-xs text-[var(--muted)] truncate">
-        {d.provider.toUpperCase()} &middot; {d.region} &middot; {d.vm_size}
-      </p>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 24 }}>
 
-      {/* Error message */}
-      {d.error && d.status === "failed" && (
-        <p className="text-xs text-[var(--error)] truncate" title={d.error}>
-          {d.error}
-        </p>
-      )}
+        {/* VM icon + status dot */}
+        <div style={{ position: "relative", flexShrink: 0 }}>
+          <div style={{
+            width: 72, height: 72, borderRadius: 18,
+            background: "rgba(99,102,241,0.15)", border: "1px solid rgba(99,102,241,0.3)",
+            display: "flex", alignItems: "center", justifyContent: "center",
+          }}>
+            <svg width="36" height="36" viewBox="0 0 36 36" fill="none">
+              <rect x="4" y="8" width="28" height="18" rx="4" stroke={COLORS.indigoLight} strokeWidth="1.5"/>
+              <rect x="8" y="12" width="20" height="10" rx="2" fill={COLORS.indigo} opacity="0.4"/>
+              <line x1="12" y1="26" x2="24" y2="26" stroke={COLORS.indigoLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <line x1="18" y1="26" x2="18" y2="30" stroke={COLORS.indigoLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <line x1="12" y1="30" x2="24" y2="30" stroke={COLORS.indigoLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <rect x="10" y="14" width="2" height="6" rx="1" fill={COLORS.teal} opacity="0.85"/>
+              <line x1="14" y1="15" x2="22" y2="15" stroke="rgba(255,255,255,0.3)" strokeWidth="1" strokeLinecap="round"/>
+              <line x1="14" y1="18" x2="20" y2="18" stroke="rgba(255,255,255,0.2)" strokeWidth="1" strokeLinecap="round"/>
+            </svg>
+          </div>
+          {d.status === "running" && (
+            <div style={{
+              position: "absolute", bottom: 2, right: 2, width: 14, height: 14,
+              borderRadius: "50%", background: "#4ade80",
+              border: "2px solid #07091a", boxShadow: "0 0 8px #4ade80",
+            }} />
+          )}
+          {transient && (
+            <div style={{
+              position: "absolute", bottom: 2, right: 2, width: 14, height: 14,
+              borderRadius: "50%", background: COLORS.indigoLight,
+              border: "2px solid #07091a", animation: "pulse-core 1.5s infinite",
+            }} />
+          )}
+        </div>
 
-      {/* Service links */}
-      {d.status === "running" && sshCommand && (
-        <div className="flex flex-col gap-2 rounded-md bg-[var(--bg)] p-3">
-          {sshCommand && (
-            <div className="flex items-center gap-2 text-xs">
-              <IconTerminal
-                size={14}
-                className="shrink-0 text-[var(--muted)]"
-              />
-              <code className="flex-1 truncate font-mono text-[var(--fg-secondary)]">
-                {sshCommand}
-              </code>
-              <CopyButton text={sshCommand} />
-              <button
-                type="button"
-                className="btn btn-ghost btn-sm text-xs"
-                onClick={() => onOpenTerminal(d.id)}
-                aria-label="Open SSH terminal"
-                title="Open embedded terminal"
-              >
-                Open
-              </button>
+        {/* Main info */}
+        <div style={{ flex: 1, minWidth: 0 }}>
+          {/* Name row */}
+          <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 10, marginBottom: 10 }}>
+            <h2 style={{
+              fontFamily: "var(--font-syne), Syne, sans-serif",
+              fontSize: 22, fontWeight: 700, color: COLORS.textPrimary,
+              letterSpacing: "-0.02em", margin: 0,
+            }}>
+              {d.name}
+            </h2>
+            <StatusPill status={d.status} />
+            <ProviderBadge provider={d.provider} />
+            <span style={{ fontSize: 12, color: COLORS.textMuted }}>{d.region}</span>
+          </div>
+
+          {/* Metadata */}
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 24, marginBottom: 14 }}>
+            {[
+              { label: "Size",    value: d.vm_size },
+              { label: "IP",      value: d.public_ip ?? "—", mono: true },
+              { label: "Active",  value: relativeTime(d.created_at) },
+            ].map(({ label, value, mono }) => (
+              <div key={label}>
+                <div style={{ fontSize: 10, color: COLORS.textMuted, fontWeight: 700, letterSpacing: "0.06em", textTransform: "uppercase", marginBottom: 3 }}>{label}</div>
+                <div style={{ fontSize: 13, color: COLORS.textSecondary, fontFamily: mono ? "monospace" : "inherit", fontWeight: 500 }}>{value}</div>
+              </div>
+            ))}
+          </div>
+
+          {/* Error */}
+          {d.error && d.status === "failed" && (
+            <p style={{ fontSize: 12, color: "#f87171", margin: "0 0 10px" }}>{d.error}</p>
+          )}
+
+          {/* Transient label */}
+          {transient && (
+            <div style={{ display: "flex", alignItems: "center", gap: 6, color: COLORS.indigoLight, fontSize: 13 }}>
+              <IconLoader size={13} className="animate-spin" style={{ color: COLORS.indigoLight }} />
+              {statusLabel(d.status)}...
             </div>
           )}
 
-          {/* Open Chat — connect Open WebUI to this deployment via SSH tunnel */}
-          {canChat && (
-            <div className="flex items-center gap-2 pt-1">
-              <button
-                type="button"
-                className={`btn btn-sm flex-1 ${
-                  isConnected
-                    ? "btn-primary"
-                    : "btn-secondary"
-                }`}
-                disabled={isChatLoading}
-                onClick={() => onOpenChat(d.id, d.name)}
-              >
-                {isChatLoading ? (
-                  <IconLoader size={14} />
-                ) : (
-                  <IconChat size={14} />
-                )}
-                {isConnected ? "Open Chat" : "Connect & Chat"}
-              </button>
-              {isConnected && (
-                <span className="text-[10px] text-[var(--success)] font-medium">Connected</span>
-              )}
+          {/* SSH row */}
+          {d.status === "running" && sshCommand && (
+            <div style={{
+              display: "flex", alignItems: "center", gap: 8, marginTop: 14,
+              padding: "8px 12px", background: "rgba(255,255,255,0.04)",
+              border: `1px solid ${COLORS.border}`, borderRadius: 8,
+            }}>
+              <IconTerminal size={13} style={{ color: COLORS.textMuted, flexShrink: 0 }} />
+              <code style={{ fontSize: 12, color: COLORS.textSecondary, fontFamily: "monospace", flex: 1 }}>{sshCommand}</code>
+              <CopyButton text={sshCommand} />
+              <button type="button" className="btn btn-ghost btn-sm text-xs" onClick={() => onOpenTerminal(d.id)}>Open</button>
             </div>
           )}
         </div>
-      )}
 
-      {/* Actions */}
-      <div className="flex items-center gap-2">
-        {(d.status === "provisioning" || d.status === "configuring") && (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--accent)]">
-            <IconLoader size={14} />
-            Deploying...
-          </span>
-        )}
+        {/* Action buttons */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0, minWidth: 148 }}>
 
-        {d.status === "starting" && (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--accent)]">
-            <IconLoader size={14} />
-            Starting...
-          </span>
-        )}
-
-        {d.status === "stopping" && (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--warning)]">
-            <IconLoader size={14} />
-            Stopping...
-          </span>
-        )}
-
-        {d.status === "destroying" && (
-          <span className="flex items-center gap-1.5 text-xs text-[var(--error)]">
-            <IconLoader size={14} />
-            Destroying...
-          </span>
-        )}
-
-        {d.status === "running" && (
-          <>
+          {/* Connect & Chat */}
+          {canChat && (
             <button
               type="button"
-              className="btn btn-secondary btn-sm"
+              disabled={isChatLoading}
+              onClick={() => onOpenChat(d.id, d.name)}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                background: COLORS.indigo, border: "none", borderRadius: 10, padding: "11px 16px",
+                color: "white", fontSize: 13, fontWeight: 600, cursor: isChatLoading ? "default" : "pointer",
+                fontFamily: "inherit", boxShadow: "0 4px 16px rgba(99,102,241,0.3)", transition: "opacity 0.2s",
+                opacity: isChatLoading ? 0.7 : 1,
+              }}
+            >
+              {isChatLoading ? <IconLoader size={14} style={{ color: "white" }} className="animate-spin" /> : <IconChat size={14} style={{ color: "white" }} />}
+              {isConnected ? "Open Chat" : "Connect & Chat"}
+            </button>
+          )}
+
+          {/* Stop */}
+          {d.status === "running" && (
+            <button
+              type="button"
               disabled={loadingAction !== null}
               onClick={() => onStop(d.id)}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                background: "rgba(255,255,255,0.05)", border: `1px solid ${COLORS.border}`,
+                borderRadius: 10, padding: "9px 16px", color: COLORS.textSecondary,
+                fontSize: 13, fontWeight: 600, cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
+              }}
             >
-              {loadingAction === "stop" ? (
-                <IconLoader size={14} />
-              ) : (
-                <IconStop size={14} />
-              )}
-              Stop
+              {loadingAction === "stop" ? <IconLoader size={14} className="animate-spin" /> : <IconStop size={14} />}
+              Stop VM
             </button>
-            <button
-              type="button"
-              className="btn btn-danger btn-sm"
-              disabled={loadingAction !== null}
-              onClick={() => onDestroy(d.id)}
-            >
-              {loadingAction === "destroy" ? (
-                <IconLoader size={14} />
-              ) : (
-                <IconTrash size={14} />
-              )}
-              Destroy
-            </button>
-          </>
-        )}
+          )}
 
-        {d.status === "stopped" && (
-          <>
+          {/* Start */}
+          {d.status === "stopped" && (
             <button
               type="button"
-              className="btn btn-primary btn-sm"
               disabled={loadingAction !== null}
               onClick={() => onStart(d.id)}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                background: "rgba(255,255,255,0.05)", border: `1px solid ${COLORS.border}`,
+                borderRadius: 10, padding: "9px 16px", color: COLORS.textSecondary,
+                fontSize: 13, fontWeight: 600, cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
+              }}
             >
-              {loadingAction === "start" ? (
-                <IconLoader size={14} />
-              ) : (
-                <IconPlay size={14} />
-              )}
-              Start
+              {loadingAction === "start" ? <IconLoader size={14} className="animate-spin" /> : <IconPlay size={14} />}
+              Start VM
             </button>
+          )}
+
+          {/* Destroy */}
+          {(d.status === "running" || d.status === "stopped" || d.status === "failed") && (
             <button
               type="button"
-              className="btn btn-danger btn-sm"
               disabled={loadingAction !== null}
               onClick={() => onDestroy(d.id)}
+              style={{
+                display: "flex", alignItems: "center", justifyContent: "center", gap: 7,
+                background: "rgba(248,113,113,0.07)", border: "1px solid rgba(248,113,113,0.2)",
+                borderRadius: 10, padding: "9px 16px", color: "#f87171",
+                fontSize: 13, fontWeight: 600, cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
+              }}
             >
-              {loadingAction === "destroy" ? (
-                <IconLoader size={14} />
-              ) : (
-                <IconTrash size={14} />
-              )}
+              {loadingAction === "destroy" ? <IconLoader size={14} className="animate-spin" style={{ color: "#f87171" }} /> : <IconTrash size={14} />}
               Destroy
             </button>
-          </>
-        )}
+          )}
 
-        {d.status === "failed" && (
+          {/* Refresh */}
           <button
             type="button"
-            className="btn btn-danger btn-sm"
-            disabled={loadingAction !== null}
-            onClick={() => onDestroy(d.id)}
+            disabled={loadingAction === "refresh"}
+            onClick={() => onRefresh(d.id)}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              background: "none", border: "none", padding: "6px", marginTop: 2,
+              color: COLORS.textMuted, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+            }}
           >
-            {loadingAction === "destroy" ? (
-              <IconLoader size={14} />
-            ) : (
-              <IconTrash size={14} />
-            )}
-            Destroy
+            <IconRefresh size={13} className={loadingAction === "refresh" ? "animate-spin" : ""} />
+            Refresh status
           </button>
-        )}
+        </div>
       </div>
 
-      {/* Model manager — only when running */}
-      {d.status === "running" && <ModelManager deploymentId={d.id} />}
+      {/* Model manager */}
+      {d.status === "running" && (
+        <div style={{ marginTop: 20 }}>
+          <ModelManager deploymentId={d.id} />
+        </div>
+      )}
+    </div>
+  );
+}
 
-      {/* Bottom: created time + refresh */}
-      <div className="flex items-center justify-between border-t border-[var(--border-color)] pt-3">
-        <span className="text-xs text-[var(--muted)]">
-          Created {relativeTime(d.created_at)}
-        </span>
+// ---------------------------------------------------------------------------
+// Compact row (inside "More deployments" collapsible)
+// ---------------------------------------------------------------------------
+
+function CompactRow({
+  d, index, actions, hovered, onHover,
+}: {
+  d: DeploymentView;
+  index: number;
+  actions: CardActions;
+  hovered: boolean;
+  onHover: (id: string | null) => void;
+}) {
+  const { onStart, onStop, onDestroy, onOpenChat,
+          chatLoadingId, connectedDeploymentId, loadingAction } = actions;
+
+  const canChat = d.status === "running" && !!d.public_ip;
+  const isConnected = connectedDeploymentId === d.id;
+  const isChatLoading = chatLoadingId === d.id;
+  const transient = isTransient(d.status);
+  const statusColor = d.status === "running" ? "#4ade80"
+    : d.status === "failed" ? "#f87171"
+    : transient ? COLORS.indigoLight
+    : "#6b7280";
+
+  return (
+    <div
+      onMouseEnter={() => onHover(d.id)}
+      onMouseLeave={() => onHover(null)}
+      style={{
+        display: "flex", alignItems: "center", gap: 16, padding: "14px 20px",
+        background: hovered ? "rgba(255,255,255,0.035)" : index % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
+        borderTop: index > 0 ? `1px solid ${COLORS.border}` : "none",
+        transition: "background 0.15s",
+      }}
+    >
+      {/* Icon + status dot */}
+      <div style={{ position: "relative", width: 40, height: 40, flexShrink: 0 }}>
+        <div style={{
+          width: 40, height: 40, borderRadius: 10,
+          background: "rgba(255,255,255,0.04)", border: `1px solid ${COLORS.border}`,
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            <rect x="2" y="4" width="16" height="10" rx="2.5" stroke={COLORS.textMuted} strokeWidth="1.2"/>
+            <line x1="7" y1="14" x2="13" y2="14" stroke={COLORS.textMuted} strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="10" y1="14" x2="10" y2="17" stroke={COLORS.textMuted} strokeWidth="1.2" strokeLinecap="round"/>
+            <line x1="7" y1="17" x2="13" y2="17" stroke={COLORS.textMuted} strokeWidth="1.2" strokeLinecap="round"/>
+          </svg>
+        </div>
+        <div style={{
+          position: "absolute", bottom: -1, right: -1, width: 10, height: 10,
+          borderRadius: "50%", background: statusColor, border: "2px solid #07091a",
+          animation: transient ? "pulse-core 1.5s infinite" : "none",
+        }} />
+      </div>
+
+      {/* Name + meta */}
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{d.name}</span>
+          <ProviderBadge provider={d.provider} />
+          <span style={{ fontSize: 11, color: COLORS.textMuted }}>{d.region}</span>
+        </div>
+        <div style={{ display: "flex", gap: 14 }}>
+          <span style={{ fontSize: 12, color: COLORS.textMuted }}>{d.vm_size}</span>
+          <span style={{ fontSize: 12, color: statusColor, fontWeight: 500 }}>
+            {statusLabel(d.status)}{d.status === "running" ? ` · ${relativeTime(d.created_at)}` : ""}
+          </span>
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{
+        display: "flex", gap: 7, flexShrink: 0,
+        opacity: hovered ? 1 : 0.45, transition: "opacity 0.2s",
+      }}>
+        {canChat && (
+          <button
+            type="button"
+            disabled={isChatLoading}
+            onClick={() => onOpenChat(d.id, d.name)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              background: COLORS.indigo, border: "none", borderRadius: 8,
+              padding: "7px 14px", color: "white", fontSize: 12, fontWeight: 600,
+              cursor: isChatLoading ? "default" : "pointer", fontFamily: "inherit",
+            }}
+          >
+            {isChatLoading ? <IconLoader size={12} className="animate-spin" style={{ color: "white" }} /> : <IconChat size={12} style={{ color: "white" }} />}
+            {isConnected ? "Chat" : "Connect"}
+          </button>
+        )}
+        {d.status === "stopped" && (
+          <button
+            type="button"
+            disabled={loadingAction !== null}
+            onClick={() => onStart(d.id)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 8,
+              padding: "7px 12px", color: COLORS.textSecondary, fontSize: 12, fontWeight: 500,
+              cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
+            }}
+          >
+            {loadingAction === "start" ? <IconLoader size={12} className="animate-spin" /> : <IconPlay size={12} />}
+            Start
+          </button>
+        )}
+        {d.status === "running" && (
+          <button
+            type="button"
+            disabled={loadingAction !== null}
+            onClick={() => onStop(d.id)}
+            style={{
+              display: "flex", alignItems: "center", gap: 5,
+              background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 8,
+              padding: "7px 12px", color: COLORS.textSecondary, fontSize: 12, fontWeight: 500,
+              cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
+            }}
+          >
+            {loadingAction === "stop" ? <IconLoader size={12} className="animate-spin" /> : <IconStop size={12} />}
+            Stop
+          </button>
+        )}
         <button
           type="button"
-          className="btn btn-ghost btn-icon btn-sm"
-          disabled={loadingAction === "refresh"}
-          onClick={() => onRefresh(d.id)}
-          aria-label="Refresh deployment status"
+          disabled={loadingAction !== null}
+          onClick={() => onDestroy(d.id)}
+          title="Destroy"
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            background: "none", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 8,
+            padding: "7px 10px", color: "#f87171", cursor: loadingAction ? "default" : "pointer",
+          }}
         >
-          <IconRefresh
-            size={14}
-            className={loadingAction === "refresh" ? "animate-spin" : ""}
-          />
+          {loadingAction === "destroy" ? <IconLoader size={12} className="animate-spin" style={{ color: "#f87171" }} /> : <IconTrash size={12} />}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Empty state
+// ---------------------------------------------------------------------------
+
+function EmptyState({ onNavigate }: { onNavigate: (page: string) => void }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", justifyContent: "center", padding: "80px 0" }}>
+      <div style={{
+        display: "flex", flexDirection: "column", alignItems: "center", gap: 16, textAlign: "center",
+        padding: "48px 60px", background: COLORS.bgCard, border: `1px solid ${COLORS.border}`, borderRadius: 20,
+      }}>
+        <div style={{
+          width: 72, height: 72, borderRadius: 18,
+          background: "rgba(99,102,241,0.1)", border: "1px solid rgba(99,102,241,0.2)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <IconServer size={32} style={{ color: COLORS.textMuted }} />
+        </div>
+        <div>
+          <h2 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: 18, fontWeight: 700, color: COLORS.textPrimary, margin: "0 0 8px", letterSpacing: "-0.02em" }}>
+            No deployments yet
+          </h2>
+          <p style={{ color: COLORS.textMuted, fontSize: 14, margin: 0 }}>
+            Deploy your first private AI — it only takes a few minutes.
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onNavigate("provision")}
+          style={{
+            display: "flex", alignItems: "center", gap: 8,
+            background: COLORS.indigo, border: "none", borderRadius: 10, padding: "10px 20px",
+            color: "white", fontSize: 14, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+            boxShadow: "0 4px 12px rgba(99,102,241,0.3)",
+          }}
+        >
+          <IconPlus size={16} style={{ color: "white" }} />
+          Create Deployment
         </button>
       </div>
     </div>
@@ -636,116 +764,67 @@ interface DashboardProps {
 
 type OpenPanel =
   | { type: "terminal"; deploymentId: string }
-  | { type: "webui"; url: string }
+  | { type: "chat"; url: string }
   | null;
 
 export default function Dashboard({ onNavigate }: DashboardProps) {
   const [deployments, setDeployments] = useState<DeploymentView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<
-    Record<string, string | null>
-  >({});
+  const [actionLoading, setActionLoading] = useState<Record<string, string | null>>({});
   const [openPanel, setOpenPanel] = useState<OpenPanel>(null);
   const [costExpanded, setCostExpanded] = useState(false);
   const [chatLoadingId, setChatLoadingId] = useState<string | null>(null);
   const [chatError, setChatError] = useState<string | null>(null);
   const [connectedDeploymentId, setConnectedDeploymentId] = useState("");
   const [bulkDestroyLoading, setBulkDestroyLoading] = useState(false);
-  const [bulkDestroyFeedback, setBulkDestroyFeedback] = useState<{
-    tone: "success" | "error";
-    message: string;
-  } | null>(null);
+  const [bulkDestroyFeedback, setBulkDestroyFeedback] = useState<{ tone: "success" | "error"; message: string } | null>(null);
+  const [moreExpanded, setMoreExpanded] = useState(false);
+  const [hoveredRowId, setHoveredRowId] = useState<string | null>(null);
 
-  // Cost monitoring
-  const {
-    report: costReport,
-    loading: costLoading,
-    refreshing: costRefreshing,
-    refresh: refreshCost,
-    hasUnacknowledgedAlerts,
-  } = useCostMonitor();
+  const { report: costReport, loading: costLoading, refreshing: costRefreshing, refresh: refreshCost, hasUnacknowledgedAlerts } = useCostMonitor();
 
   const handleOpenTerminal = useCallback((id: string) => {
     setOpenPanel({ type: "terminal", deploymentId: id });
   }, []);
 
-  /** Called from a deployment card — connects Open WebUI to this deployment, then opens chat. */
-  const handleConnectAndChat = useCallback(
-    async (deploymentId: string, deploymentName: string) => {
-      setChatLoadingId(deploymentId);
-      setChatError(null);
-      try {
-        const result = await connectOpenWebuiToDeployment(
-          deploymentId,
-          deploymentName,
-        );
-        if (result.success && result.state.url) {
-          setConnectedDeploymentId(deploymentId);
-          setOpenPanel({ type: "webui", url: result.state.url });
-        } else {
-          setChatError(result.message || "Open WebUI failed to start");
-        }
-      } catch (err) {
-        setChatError(err instanceof Error ? err.message : "Failed to connect");
-      } finally {
-        setChatLoadingId(null);
+  const handleConnectAndChat = useCallback(async (deploymentId: string, deploymentName: string) => {
+    setChatLoadingId(deploymentId);
+    setChatError(null);
+    try {
+      const result = await connectOpenWebuiToDeployment(deploymentId, deploymentName);
+      if (result.success && result.state.url) {
+        setConnectedDeploymentId(deploymentId);
+        setOpenPanel({ type: "chat", url: result.state.url });
+      } else {
+        setChatError(result.message || "Open WebUI failed to start");
       }
-    },
-    [],
-  );
-
-  const handleClosePanel = useCallback(() => {
-    setOpenPanel(null);
+    } catch (err) {
+      setChatError(err instanceof Error ? err.message : "Failed to connect");
+    } finally {
+      setChatLoadingId(null);
+    }
   }, []);
 
-  // -----------------------------------------------------------------------
-  // Load data
-  // -----------------------------------------------------------------------
+  const handleClosePanel = useCallback(() => setOpenPanel(null), []);
 
   const loadData = useCallback(async () => {
-    // 1) Instant display from local storage
     const history = getDeploymentHistory();
     const fromHistory: DeploymentView[] = history.map((h) => ({
-      id: h.id,
-      name: h.name,
-      provider: h.provider,
-      region: h.region,
-      vm_size: h.vm_size,
-      status: h.status,
-      created_at: h.created_at,
-      public_ip: h.public_ip,
-      endpoints: h.endpoints,
-      error: null,
+      id: h.id, name: h.name, provider: h.provider, region: h.region, vm_size: h.vm_size,
+      status: h.status, created_at: h.created_at, public_ip: h.public_ip, endpoints: h.endpoints, error: null,
     }));
+    if (fromHistory.length > 0) setDeployments(fromHistory);
 
-    if (fromHistory.length > 0) {
-      setDeployments(fromHistory);
-    }
-
-    // 2) Fetch live data and merge
     try {
       const live = await fetchDeployments();
       const liveViews = live.map(deploymentToView);
-
-      // Merge: live data wins, keep history entries not in live
       const liveIds = new Set(liveViews.map((v) => v.id));
-      const merged = [
-        ...liveViews,
-        ...fromHistory.filter((h) => !liveIds.has(h.id)),
-      ];
-
-      setDeployments(merged);
-
-      // Update local storage with latest statuses
+      setDeployments([...liveViews, ...fromHistory.filter((h) => !liveIds.has(h.id))]);
       for (const v of liveViews) {
-        updateDeploymentInHistory(v.id, {
-          status: v.status,
-          public_ip: v.public_ip ?? "",
-          endpoints: v.endpoints ?? EMPTY_ENDPOINTS,
-        });
+        updateDeploymentInHistory(v.id, { status: v.status, public_ip: v.public_ip ?? "", endpoints: v.endpoints ?? EMPTY_ENDPOINTS });
       }
     } catch {
-      // API unreachable -- keep showing cached history
+      // keep cached history
     } finally {
       setLoading(false);
     }
@@ -753,296 +832,267 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
   useEffect(() => {
     loadData();
-    // Sync connected deployment from Open WebUI status
     fetchOpenWebuiStatus()
       .then((state) => {
-        if (state.connected_deployment_id) {
-          setConnectedDeploymentId(state.connected_deployment_id);
+        if (state.connected_deployment_id) setConnectedDeploymentId(state.connected_deployment_id);
+        if (state.status === "running" && state.url) {
+          try { localStorage.setItem("_privateai_chat_url", state.url); } catch {}
+        } else if (state.status === "stopped" || state.status === "error") {
+          startOpenWebui().then((r) => {
+            if (r.success && r.state?.url) {
+              try { localStorage.setItem("_privateai_chat_url", r.state.url); } catch {}
+            }
+          }).catch(() => {});
         }
-      })
-      .catch(() => {});
+      }).catch(() => {});
   }, [loadData]);
 
-  // -----------------------------------------------------------------------
-  // Auto-refresh transient statuses
-  // -----------------------------------------------------------------------
-
   useEffect(() => {
-    const hasTransient = deployments.some((d) => isTransient(d.status));
-    if (!hasTransient) return;
-
-    const interval = setInterval(() => {
-      loadData();
-    }, 5000);
-
+    if (!deployments.some((d) => isTransient(d.status))) return;
+    const interval = setInterval(loadData, 5000);
     return () => clearInterval(interval);
   }, [deployments, loadData]);
 
-  // -----------------------------------------------------------------------
-  // Actions
-  // -----------------------------------------------------------------------
+  const setActionFor = useCallback((id: string, action: string | null) => {
+    setActionLoading((prev) => ({ ...prev, [id]: action }));
+  }, []);
 
-  const setActionFor = useCallback(
-    (id: string, action: string | null) => {
-      setActionLoading((prev) => ({ ...prev, [id]: action }));
-    },
-    [],
-  );
+  const handleRefresh = useCallback(async (id: string) => {
+    setActionFor(id, "refresh");
+    try {
+      const view = deploymentToView(await fetchDeploymentLive(id));
+      setDeployments((prev) => prev.map((d) => d.id === id ? view : d));
+      updateDeploymentInHistory(id, { status: view.status, public_ip: view.public_ip ?? "", endpoints: view.endpoints ?? EMPTY_ENDPOINTS });
+    } catch { /* keep current */ } finally { setActionFor(id, null); }
+  }, [setActionFor]);
 
-  const handleRefresh = useCallback(
-    async (id: string) => {
-      setActionFor(id, "refresh");
-      try {
-        const live = await fetchDeploymentLive(id);
-        const view = deploymentToView(live);
-        setDeployments((prev) =>
-          prev.map((d) => (d.id === id ? view : d)),
-        );
-        updateDeploymentInHistory(id, {
-          status: view.status,
-          public_ip: view.public_ip ?? "",
-          endpoints: view.endpoints ?? EMPTY_ENDPOINTS,
-        });
-      } catch {
-        // Silently fail -- stale data stays
-      } finally {
-        setActionFor(id, null);
+  const handleStart = useCallback(async (id: string) => {
+    setActionFor(id, "start");
+    try {
+      await startDeployment(id);
+      setDeployments((prev) => prev.map((d) => d.id === id ? { ...d, status: "starting" as const } : d));
+      updateDeploymentInHistory(id, { status: "starting" });
+    } catch { /* keep current */ } finally { setActionFor(id, null); }
+  }, [setActionFor]);
+
+  const handleStop = useCallback(async (id: string) => {
+    setActionFor(id, "stop");
+    try {
+      await stopDeployment(id);
+      setDeployments((prev) => prev.map((d) => d.id === id ? { ...d, status: "stopping" as const } : d));
+      updateDeploymentInHistory(id, { status: "stopping" });
+    } catch { /* keep current */ } finally { setActionFor(id, null); }
+  }, [setActionFor]);
+
+  const handleDestroy = useCallback(async (id: string) => {
+    setActionFor(id, "destroy");
+    try {
+      const settings = getSettings();
+      const credentials: AzureCredentials | undefined =
+        settings.savedCredentials?.provider === "azure" ? settings.savedCredentials : undefined;
+      const result = await destroyDeployment(id, credentials);
+      if (result.success && result.status === "destroyed") {
+        removeDeploymentFromHistory(id);
+        setDeployments((prev) => prev.filter((d) => d.id !== id));
+        return;
       }
-    },
-    [setActionFor],
-  );
-
-  const handleStart = useCallback(
-    async (id: string) => {
-      setActionFor(id, "start");
-      try {
-        await startDeployment(id);
-        setDeployments((prev) =>
-          prev.map((d) =>
-            d.id === id ? { ...d, status: "starting" as const } : d,
-          ),
-        );
-        updateDeploymentInHistory(id, { status: "starting" });
-      } catch {
-        // Keep current state
-      } finally {
-        setActionFor(id, null);
-      }
-    },
-    [setActionFor],
-  );
-
-  const handleStop = useCallback(
-    async (id: string) => {
-      setActionFor(id, "stop");
-      try {
-        await stopDeployment(id);
-        setDeployments((prev) =>
-          prev.map((d) =>
-            d.id === id ? { ...d, status: "stopping" as const } : d,
-          ),
-        );
-        updateDeploymentInHistory(id, { status: "stopping" });
-      } catch {
-        // Keep current state
-      } finally {
-        setActionFor(id, null);
-      }
-    },
-    [setActionFor],
-  );
-
-  const handleDestroy = useCallback(
-    async (id: string) => {
-      setActionFor(id, "destroy");
-      try {
-        const settings = getSettings();
-        const credentials: AzureCredentials | undefined =
-          settings.savedCredentials?.provider === "azure"
-            ? settings.savedCredentials
-            : undefined;
-        const result = await destroyDeployment(id, credentials);
-
-        if (result.success && result.status === "destroyed") {
-          removeDeploymentFromHistory(id);
-          setDeployments((prev) => prev.filter((d) => d.id !== id));
-          return;
-        }
-
-        setDeployments((prev) =>
-          prev.map((d) =>
-            d.id === id
-              ? { ...d, status: result.status as DeploymentStatus, error: result.message }
-              : d,
-          ),
-        );
-        updateDeploymentInHistory(id, { status: result.status as DeploymentStatus });
-      } catch {
-        // Keep current state
-      } finally {
-        setActionFor(id, null);
-      }
-    },
-    [setActionFor],
-  );
+      setDeployments((prev) => prev.map((d) => d.id === id ? { ...d, status: result.status as DeploymentStatus, error: result.message } : d));
+      updateDeploymentInHistory(id, { status: result.status as DeploymentStatus });
+    } catch { /* keep current */ } finally { setActionFor(id, null); }
+  }, [setActionFor]);
 
   const handleDestroyAllManagedResources = useCallback(async () => {
-    const confirmed = window.confirm(
-      "Destroy all Azure resource groups created by PrivateAI in this subscription? This only targets groups tagged as managed by PrivateAI.",
-    );
-    if (!confirmed) return;
-
+    if (!window.confirm("Destroy all Azure resource groups created by PrivateAI in this subscription? This only targets groups tagged as managed by PrivateAI.")) return;
     setBulkDestroyLoading(true);
     setBulkDestroyFeedback(null);
     try {
       const settings = getSettings();
       const credentials: AzureCredentials | undefined =
-        settings.savedCredentials?.provider === "azure"
-          ? settings.savedCredentials
-          : undefined;
+        settings.savedCredentials?.provider === "azure" ? settings.savedCredentials : undefined;
       const result = await destroyManagedResources("azure", credentials);
-
-      for (const deploymentId of result.removed_deployment_ids) {
-        removeDeploymentFromHistory(deploymentId);
-      }
-
-      setDeployments((prev) =>
-        prev.filter((deployment) => !result.removed_deployment_ids.includes(deployment.id)),
-      );
-      setBulkDestroyFeedback({
-        tone: result.success ? "success" : "error",
-        message: result.message,
-      });
+      for (const id of result.removed_deployment_ids) removeDeploymentFromHistory(id);
+      setDeployments((prev) => prev.filter((d) => !result.removed_deployment_ids.includes(d.id)));
+      setBulkDestroyFeedback({ tone: result.success ? "success" : "error", message: result.message });
       await loadData();
     } catch (err) {
-      setBulkDestroyFeedback({
-        tone: "error",
-        message: err instanceof Error ? err.message : "Bulk destroy failed",
-      });
+      setBulkDestroyFeedback({ tone: "error", message: err instanceof Error ? err.message : "Bulk destroy failed" });
     } finally {
       setBulkDestroyLoading(false);
     }
   }, [loadData]);
 
-  // -----------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
   // Render
-  // -----------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
 
+  const featuredDeployment = deployments.find((d) => d.status === "running") ?? deployments[0];
+  const restDeployments = featuredDeployment ? deployments.filter((d) => d.id !== featuredDeployment.id) : [];
   const isEmpty = !loading && deployments.length === 0;
 
   return (
-    <div className="flex flex-col gap-6 p-6 animate-[fade-in_0.2s_ease-out]">
+    <div style={{ padding: "36px 40px", maxWidth: 960, margin: "0 auto" }}>
+
       {/* Header */}
-      <div className="flex items-center justify-between">
-        <h1 className="text-xl font-semibold text-[var(--fg)]">Deployments</h1>
-        <div className="flex items-center gap-3">
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
+        <div>
+          <h1 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: 28, fontWeight: 700, color: COLORS.textPrimary, letterSpacing: "-0.02em", margin: "0 0 6px" }}>
+            Your Private AI
+          </h1>
+          <p style={{ color: COLORS.textSecondary, fontSize: 14, margin: 0 }}>
+            Manage your servers and start private conversations
+          </p>
+        </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <button
             type="button"
-            className="btn btn-danger"
-            onClick={handleDestroyAllManagedResources}
             disabled={bulkDestroyLoading}
+            onClick={handleDestroyAllManagedResources}
+            style={{
+              display: "flex", alignItems: "center", gap: 6,
+              background: "rgba(248,113,113,0.07)", border: "1px solid rgba(248,113,113,0.2)",
+              borderRadius: 10, padding: "9px 14px", color: "#f87171", fontSize: 12, fontWeight: 600,
+              cursor: bulkDestroyLoading ? "default" : "pointer", fontFamily: "inherit",
+            }}
           >
-            {bulkDestroyLoading ? <IconLoader size={16} /> : <IconAlert size={16} />}
-            Destroy All Managed Azure Resources
+            {bulkDestroyLoading ? <IconLoader size={14} className="animate-spin" style={{ color: "#f87171" }} /> : <IconAlert size={14} />}
+            Destroy All Azure
           </button>
           <button
             type="button"
-            className="btn btn-primary"
             onClick={() => onNavigate("provision")}
+            style={{
+              display: "flex", alignItems: "center", gap: 7,
+              background: COLORS.indigo, border: "none", borderRadius: 10, padding: "10px 18px",
+              color: "white", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "inherit",
+              boxShadow: "0 4px 12px rgba(99,102,241,0.3)",
+            }}
           >
-            <IconPlus size={16} />
+            <IconPlus size={15} style={{ color: "white" }} />
             New Deployment
           </button>
         </div>
       </div>
 
+      {/* Bulk destroy feedback */}
       {bulkDestroyFeedback && (
-        <div
-          className={
-            bulkDestroyFeedback.tone === "success"
-              ? "card border-[var(--success)] bg-[var(--success-subtle)] p-3"
-              : "card border-[var(--error)] bg-[var(--error-subtle)] p-3"
-          }
-        >
-          <p
-            className={
-              bulkDestroyFeedback.tone === "success"
-                ? "text-sm text-[var(--success)]"
-                : "text-sm text-[var(--error)]"
-            }
-          >
-            {bulkDestroyFeedback.message}
-          </p>
+        <div style={{
+          marginBottom: 16, padding: "12px 16px", borderRadius: 10,
+          background: bulkDestroyFeedback.tone === "success" ? "rgba(74,222,128,0.08)" : "rgba(248,113,113,0.08)",
+          border: `1px solid ${bulkDestroyFeedback.tone === "success" ? "rgba(74,222,128,0.25)" : "rgba(248,113,113,0.25)"}`,
+          fontSize: 13, color: bulkDestroyFeedback.tone === "success" ? "#4ade80" : "#f87171",
+        }}>
+          {bulkDestroyFeedback.message}
         </div>
       )}
 
-      {/* Cost monitoring bar */}
-      <CostSummaryBar
-        report={costReport}
-        loading={costLoading}
-        onExpand={() => setCostExpanded((prev) => !prev)}
-        hasUnacknowledgedAlerts={hasUnacknowledgedAlerts}
-      />
-
-      {/* Cost detail panel (expanded) */}
+      {/* Cost monitoring */}
+      <CostSummaryBar report={costReport} loading={costLoading} onExpand={() => setCostExpanded((p) => !p)} hasUnacknowledgedAlerts={hasUnacknowledgedAlerts} />
       {costExpanded && costReport && (
-        <CostDetailPanel
-          report={costReport}
-          onClose={() => setCostExpanded(false)}
-          onRefresh={refreshCost}
-          refreshing={costRefreshing}
-        />
+        <CostDetailPanel report={costReport} onClose={() => setCostExpanded(false)} onRefresh={refreshCost} refreshing={costRefreshing} />
       )}
 
-      {/* Loading skeleton */}
-      {loading && deployments.length === 0 && (
-        <div className="flex items-center justify-center py-24">
-          <IconLoader size={24} className="text-[var(--muted)]" />
+      {/* Chat error */}
+      {chatError && (
+        <div style={{
+          marginTop: 16, padding: "12px 16px", borderRadius: 10,
+          background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          fontSize: 13, color: "#f87171",
+        }}>
+          {chatError}
+          <button type="button" onClick={() => setChatError(null)} style={{ background: "none", border: "none", color: "#f87171", cursor: "pointer", fontSize: 20, lineHeight: 1, paddingLeft: 12 }}>×</button>
         </div>
       )}
 
-      {/* Chat connection error */}
-      {chatError && (
-        <div className="card border-[var(--error)] bg-[var(--error-subtle)] p-3 flex items-center justify-between gap-3">
-          <p className="text-sm text-[var(--error)]">{chatError}</p>
-          <button type="button" className="btn btn-ghost btn-sm shrink-0" onClick={() => setChatError(null)}>Dismiss</button>
+      {/* Loading */}
+      {loading && deployments.length === 0 && (
+        <div style={{ display: "flex", justifyContent: "center", padding: "80px 0" }}>
+          <IconLoader size={28} className="animate-spin" style={{ color: COLORS.textMuted }} />
         </div>
       )}
 
       {/* Empty state */}
       {isEmpty && <EmptyState onNavigate={onNavigate} />}
 
-      {/* Deployment grid */}
-      {deployments.length > 0 && (
-        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 xl:grid-cols-3">
-          {deployments.map((d, i) => (
-            <DeploymentCard
-              key={d.id}
-              deployment={d}
-              index={i}
-              onRefresh={handleRefresh}
-              onStart={handleStart}
-              onStop={handleStop}
-              onDestroy={handleDestroy}
-              onOpenTerminal={handleOpenTerminal}
-              onOpenChat={handleConnectAndChat}
-              chatLoadingId={chatLoadingId}
-              connectedDeploymentId={connectedDeploymentId}
-              loadingAction={actionLoading[d.id] ?? null}
-            />
-          ))}
+      {/* Featured card */}
+      {featuredDeployment && (
+        <div style={{ marginTop: 24, animation: "fade-in 0.3s ease-out" }}>
+          <FeaturedCard
+            d={featuredDeployment}
+            actions={{
+              onRefresh: handleRefresh, onStart: handleStart, onStop: handleStop, onDestroy: handleDestroy,
+              onOpenTerminal: handleOpenTerminal, onOpenChat: handleConnectAndChat,
+              chatLoadingId, connectedDeploymentId,
+              loadingAction: actionLoading[featuredDeployment.id] ?? null,
+            }}
+          />
         </div>
       )}
 
-      {/* Embedded panels */}
-      {openPanel?.type === "terminal" && (
-        <TerminalPanel
-          deploymentId={openPanel.deploymentId}
-          onClose={handleClosePanel}
-        />
+      {/* More deployments collapsible */}
+      {restDeployments.length > 0 && (
+        <div style={{ marginTop: 14 }}>
+          <button
+            type="button"
+            onClick={() => setMoreExpanded((v) => !v)}
+            style={{
+              width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+              background: moreExpanded ? "rgba(255,255,255,0.03)" : "rgba(255,255,255,0.02)",
+              border: `1px solid ${moreExpanded ? COLORS.borderHover : COLORS.border}`,
+              borderRadius: moreExpanded ? "14px 14px 0 0" : 14,
+              padding: "14px 20px", cursor: "pointer", transition: "all 0.2s", fontFamily: "inherit",
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+                <rect x="1" y="2" width="14" height="4" rx="1.5" stroke={COLORS.textMuted} strokeWidth="1.2"/>
+                <rect x="1" y="8" width="14" height="4" rx="1.5" stroke={COLORS.textMuted} strokeWidth="1.2"/>
+              </svg>
+              <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.textSecondary }}>More deployments</span>
+              <div style={{ display: "flex", gap: 5 }}>
+                {restDeployments.map((d) => {
+                  const c = d.status === "running" ? "#4ade80" : d.status === "failed" ? "#f87171" : isTransient(d.status) ? COLORS.indigoLight : "#6b7280";
+                  return <div key={d.id} style={{ width: 8, height: 8, borderRadius: "50%", background: c, opacity: 0.85 }} />;
+                })}
+              </div>
+              <span style={{ fontSize: 12, color: COLORS.textMuted }}>{restDeployments.length} instance{restDeployments.length !== 1 ? "s" : ""}</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ fontSize: 12, color: COLORS.textMuted }}>{moreExpanded ? "Collapse" : "Expand"}</span>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ transform: moreExpanded ? "rotate(180deg)" : "none", transition: "transform 0.3s ease" }}>
+                <path d="M4 6L8 10L12 6" stroke={COLORS.textMuted} strokeWidth="1.5" strokeLinecap="round"/>
+              </svg>
+            </div>
+          </button>
+
+          {moreExpanded && (
+            <div style={{ border: `1px solid ${COLORS.borderHover}`, borderTop: "none", borderRadius: "0 0 14px 14px", overflow: "hidden" }}>
+              {restDeployments.map((d, i) => (
+                <CompactRow
+                  key={d.id}
+                  d={d}
+                  index={i}
+                  actions={{
+                    onRefresh: handleRefresh, onStart: handleStart, onStop: handleStop, onDestroy: handleDestroy,
+                    onOpenTerminal: handleOpenTerminal, onOpenChat: handleConnectAndChat,
+                    chatLoadingId, connectedDeploymentId,
+                    loadingAction: actionLoading[d.id] ?? null,
+                  }}
+                  hovered={hoveredRowId === d.id}
+                  onHover={setHoveredRowId}
+                />
+              ))}
+            </div>
+          )}
+        </div>
       )}
-      {openPanel?.type === "webui" && (
-        <WebUIPanel url={openPanel.url} onClose={handleClosePanel} />
+
+      {/* Overlays */}
+      {openPanel?.type === "terminal" && (
+        <TerminalPanel deploymentId={openPanel.deploymentId} onClose={handleClosePanel} />
+      )}
+      {openPanel?.type === "chat" && (
+        <ChatPanel openwebuiUrl={openPanel.url} onClose={handleClosePanel} />
       )}
     </div>
   );

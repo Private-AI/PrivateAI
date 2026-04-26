@@ -434,3 +434,49 @@ export function connectDeploymentWS(id: string): WebSocket {
   const url = `${WS_URL}${V1}/deployments/${id}/ws`;
   return new WebSocket(url);
 }
+
+// ---------------------------------------------------------------------------
+// Azure CLI authentication
+// ---------------------------------------------------------------------------
+
+export function startAzureCliLogin(): Promise<{
+  session_id: string;
+  verification_url: string;
+  user_code: string;
+  message: string;
+}> {
+  return request('/azure/cli/login/start', { method: 'POST' });
+}
+
+export function fetchAzureCliLoginStatus(sessionId: string): Promise<{
+  status: 'pending' | 'authenticated' | 'provisioned' | 'failed' | 'expired';
+  subscription_id?: string;
+  tenant_id?: string;
+  user_name?: string;
+  subscription_name?: string;
+  error?: string;
+}> {
+  return request(`/azure/cli/login/status?session_id=${encodeURIComponent(sessionId)}`);
+}
+
+export function provisionAzureCliServicePrincipal(
+  sessionId: string,
+  opts?: { name?: string; role?: string },
+): Promise<{
+  client_id: string;
+  client_secret: string;
+  tenant_id: string;
+  subscription_id: string;
+  display_name: string;
+}> {
+  return request('/azure/cli/provision', {
+    method: 'POST',
+    body: JSON.stringify({ session_id: sessionId, ...opts }),
+  });
+}
+
+export function cancelAzureCliLogin(sessionId: string): Promise<void> {
+  return request(`/azure/cli/login/cancel?session_id=${encodeURIComponent(sessionId)}`, {
+    method: 'POST',
+  });
+}

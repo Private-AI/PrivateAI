@@ -11,6 +11,7 @@ import {
   IconChat,
   IconLoader,
 } from "@/app/components/icons";
+import { COLORS } from "@/app/lib/colors";
 import type {
   AzureCredentials,
   BudgetConfig,
@@ -37,11 +38,11 @@ import type { DeploymentHistoryEntry } from "@/app/lib/storage";
 // ---------------------------------------------------------------------------
 
 const REGIONS = [
-  { value: "eastus", label: "East US" },
-  { value: "westus2", label: "West US 2" },
-  { value: "westeurope", label: "West Europe" },
-  { value: "uksouth", label: "UK South" },
-  { value: "southeastasia", label: "Southeast Asia" },
+  { value: "eastus",       label: "East US" },
+  { value: "westus2",      label: "West US 2" },
+  { value: "westeurope",   label: "West Europe" },
+  { value: "uksouth",      label: "UK South" },
+  { value: "southeastasia",label: "Southeast Asia" },
 ] as const;
 
 const FEEDBACK_DURATION = 2000;
@@ -61,12 +62,119 @@ function useFeedback() {
   }, []);
 
   useEffect(() => {
-    return () => {
-      if (timerRef.current) clearTimeout(timerRef.current);
-    };
+    return () => { if (timerRef.current) clearTimeout(timerRef.current); };
   }, []);
 
   return { message, show };
+}
+
+// ---------------------------------------------------------------------------
+// Sub-components
+// ---------------------------------------------------------------------------
+
+function FeedbackText({ text }: { text: string }) {
+  return (
+    <span style={{
+      fontSize: 12, fontWeight: 500, color: "#4ade80",
+      animation: "fade-in 0.15s ease-out",
+    }}>
+      {text}
+    </span>
+  );
+}
+
+function SectionCard({ children, delay = 0 }: { children: React.ReactNode; delay?: number }) {
+  return (
+    <div style={{
+      background: COLORS.bgCard,
+      border: `1px solid ${COLORS.border}`,
+      borderRadius: 20,
+      padding: "24px 28px",
+      animation: `fade-in 0.3s ease-out ${delay}s both`,
+    }}>
+      {children}
+    </div>
+  );
+}
+
+function SectionHeader({ icon, title }: { icon: React.ReactNode; title: string }) {
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 20 }}>
+      {icon}
+      <h2 style={{
+        fontFamily: "var(--font-syne), Syne, sans-serif",
+        fontSize: 15, fontWeight: 700, color: COLORS.textPrimary,
+        margin: 0, letterSpacing: "-0.01em",
+      }}>
+        {title}
+      </h2>
+    </div>
+  );
+}
+
+function FieldLabel({ htmlFor, children }: { htmlFor?: string; children: React.ReactNode }) {
+  return (
+    <label htmlFor={htmlFor} style={{
+      display: "block", marginBottom: 6,
+      fontSize: 11, fontWeight: 700, color: COLORS.textMuted,
+      letterSpacing: "0.07em", textTransform: "uppercase",
+    }}>
+      {children}
+    </label>
+  );
+}
+
+function FieldHint({ children }: { children: React.ReactNode }) {
+  return (
+    <p style={{ marginTop: 5, fontSize: 11, color: COLORS.textMuted, margin: "5px 0 0" }}>
+      {children}
+    </p>
+  );
+}
+
+function Toggle({
+  id, checked, onChange,
+}: { id: string; checked: boolean; onChange: () => void }) {
+  return (
+    <button
+      id={id}
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={onChange}
+      style={{
+        position: "relative", display: "inline-flex",
+        width: 40, height: 22, borderRadius: 11,
+        background: checked ? COLORS.indigo : COLORS.border,
+        border: "none", cursor: "pointer", transition: "background 0.2s", flexShrink: 0,
+      }}
+    >
+      <span style={{
+        position: "absolute", top: 3, left: checked ? 21 : 3,
+        width: 16, height: 16, borderRadius: "50%", background: "white",
+        transition: "left 0.2s", display: "block",
+      }} />
+    </button>
+  );
+}
+
+function StatusPill({ status }: { status: string }) {
+  const color = status === "running" ? "#4ade80" : status === "failed" ? "#f87171" : status === "stopped" ? "#f59e0b" : "#6b7280";
+  return (
+    <span style={{
+      fontSize: 10, fontWeight: 700, color,
+      background: `${color}20`, border: `1px solid ${color}30`,
+      borderRadius: 100, padding: "2px 8px", letterSpacing: "0.04em",
+    }}>
+      {status}
+    </span>
+  );
+}
+
+function formatDate(iso: string): string {
+  try {
+    return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+  } catch { return iso; }
 }
 
 // ---------------------------------------------------------------------------
@@ -81,15 +189,14 @@ interface SettingsProps {
 // Component
 // ---------------------------------------------------------------------------
 
-export default function Settings({ onNavigate }: SettingsProps) {
-  // --- State ---------------------------------------------------------------
+export default function Settings({ onNavigate: _onNavigate }: SettingsProps) {
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [defaultRegion, setDefaultRegion] = useState("centralus");
   const [defaultModels, setDefaultModels] = useState("");
   const [history, setHistory] = useState<DeploymentHistoryEntry[]>([]);
   const [confirmClearHistory, setConfirmClearHistory] = useState(false);
 
-  // Budget state
+  // Budget
   const [budgetEnabled, setBudgetEnabled] = useState(true);
   const [maxTotalSpend, setMaxTotalSpend] = useState("");
   const [maxPerDeploySpend, setMaxPerDeploySpend] = useState("");
@@ -97,7 +204,7 @@ export default function Settings({ onNavigate }: SettingsProps) {
   const [budgetActionAt100, setBudgetActionAt100] = useState<BudgetAction>("stop");
   const [budgetLoading, setBudgetLoading] = useState(false);
 
-  // Open WebUI config state
+  // Open WebUI config
   const [webuiOllamaUrls, setWebuiOllamaUrls] = useState("");
   const [webuiPort, setWebuiPort] = useState("8080");
   const [webuiName, setWebuiName] = useState("PrivateAI Chat");
@@ -112,7 +219,6 @@ export default function Settings({ onNavigate }: SettingsProps) {
   const budgetFeedback = useFeedback();
   const webuiFeedback = useFeedback();
 
-  // --- Load on mount -------------------------------------------------------
   useEffect(() => {
     const s = getSettings();
     setSettings(s);
@@ -120,7 +226,6 @@ export default function Settings({ onNavigate }: SettingsProps) {
     setDefaultModels(s.defaultModels.join(", "));
     setHistory(getDeploymentHistory());
 
-    // Load budget from backend
     fetchBudget()
       .then((budget) => {
         setBudgetEnabled(budget.enabled);
@@ -130,11 +235,8 @@ export default function Settings({ onNavigate }: SettingsProps) {
         const actionThreshold = budget.thresholds.find((t) => t.percent >= 100);
         if (actionThreshold) setBudgetActionAt100(actionThreshold.action);
       })
-      .catch(() => {
-        // Backend unreachable — use defaults
-      });
+      .catch(() => {});
 
-    // Load Open WebUI config from backend
     fetchOpenWebuiConfig()
       .then((cfg) => {
         setWebuiOllamaUrls(cfg.ollama_base_urls);
@@ -144,12 +246,8 @@ export default function Settings({ onNavigate }: SettingsProps) {
         setWebuiDefaultModels(cfg.default_models);
         setWebuiEnableRag(cfg.enable_rag);
       })
-      .catch(() => {
-        // Backend unreachable
-      });
+      .catch(() => {});
   }, []);
-
-  // --- Handlers ------------------------------------------------------------
 
   const handleClearCredentials = useCallback(() => {
     saveSettings({ savedCredentials: null });
@@ -158,14 +256,9 @@ export default function Settings({ onNavigate }: SettingsProps) {
   }, [credentialsFeedback]);
 
   const handleSavePreferences = useCallback(() => {
-    const models = defaultModels
-      .split(",")
-      .map((m) => m.trim())
-      .filter(Boolean);
+    const models = defaultModels.split(",").map((m) => m.trim()).filter(Boolean);
     saveSettings({ defaultRegion, defaultModels: models });
-    setSettings((prev) =>
-      prev ? { ...prev, defaultRegion, defaultModels: models } : prev,
-    );
+    setSettings((prev) => prev ? { ...prev, defaultRegion, defaultModels: models } : prev);
     preferencesFeedback.show("Preferences saved");
   }, [defaultRegion, defaultModels, preferencesFeedback]);
 
@@ -178,9 +271,9 @@ export default function Settings({ onNavigate }: SettingsProps) {
         max_hourly_rate_usd: parseFloat(maxHourlyRate) || 0,
         enabled: budgetEnabled,
         thresholds: [
-          { percent: 50, action: "alert" as BudgetAction, triggered: false, triggered_at: null },
-          { percent: 80, action: "alert" as BudgetAction, triggered: false, triggered_at: null },
-          { percent: 100, action: budgetActionAt100, triggered: false, triggered_at: null },
+          { percent: 50,  action: "alert" as BudgetAction, triggered: false, triggered_at: null },
+          { percent: 80,  action: "alert" as BudgetAction, triggered: false, triggered_at: null },
+          { percent: 100, action: budgetActionAt100,        triggered: false, triggered_at: null },
         ],
       };
       await setBudget(budget);
@@ -208,9 +301,7 @@ export default function Settings({ onNavigate }: SettingsProps) {
       };
       const result = await updateOpenWebuiConfig(config);
       webuiFeedback.show(
-        result.restarted
-          ? "Configuration saved and Open WebUI restarted"
-          : "Configuration saved",
+        result.restarted ? "Configuration saved and AI engine restarted" : "Configuration saved",
       );
     } catch {
       webuiFeedback.show("Failed to save configuration");
@@ -230,106 +321,92 @@ export default function Settings({ onNavigate }: SettingsProps) {
     historyFeedback.show("History cleared");
   }, [confirmClearHistory, historyFeedback]);
 
-  // Reset confirmation if user clicks elsewhere after first click
   useEffect(() => {
     if (!confirmClearHistory) return;
     const timer = setTimeout(() => setConfirmClearHistory(false), 4000);
     return () => clearTimeout(timer);
   }, [confirmClearHistory]);
 
-  // --- Render helpers ------------------------------------------------------
-
   const creds: AzureCredentials | null = settings?.savedCredentials ?? null;
-
   const recentDeployments = history.slice(0, 5);
 
   if (!settings) return null;
 
-  // --- Render --------------------------------------------------------------
-
   return (
-    <div className="mx-auto max-w-[640px] px-6 py-8">
+    <div style={{ maxWidth: 680, margin: "0 auto", padding: "40px 32px" }}>
+
       {/* Header */}
-      <div className="mb-8 flex items-center gap-3">
-        <IconSettings size={24} className="text-accent" />
-        <h1 className="text-2xl font-bold text-foreground">Settings</h1>
+      <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 32 }}>
+        <div style={{
+          width: 44, height: 44, borderRadius: 12,
+          background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <IconSettings size={20} style={{ color: COLORS.indigoLight }} />
+        </div>
+        <div>
+          <h1 style={{
+            fontFamily: "var(--font-syne), Syne, sans-serif",
+            fontSize: 24, fontWeight: 700, color: COLORS.textPrimary,
+            letterSpacing: "-0.02em", margin: 0,
+          }}>
+            Settings
+          </h1>
+          <p style={{ color: COLORS.textMuted, fontSize: 13, margin: "3px 0 0" }}>
+            Configure your PrivateAI workspace
+          </p>
+        </div>
       </div>
 
-      <div className="flex flex-col gap-6">
-        {/* ================================================================
-            1. Saved Credentials
-            ================================================================ */}
-        <section
-          className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out both" }}
-        >
-          <div className="mb-4 flex items-center gap-2">
-            <IconShield size={18} className="text-accent" />
-            <h2 className="text-base font-semibold text-foreground">
-              Saved Credentials
-            </h2>
-          </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
+        {/* ── Saved Credentials ── */}
+        <SectionCard delay={0}>
+          <SectionHeader
+            icon={<IconShield size={16} style={{ color: COLORS.indigo }} />}
+            title="Saved Credentials"
+          />
           {creds ? (
-            <div className="space-y-3">
-              <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-                <dt className="text-muted">Subscription ID</dt>
-                <dd className="font-mono text-foreground">
-                  {creds.subscription_id}
-                </dd>
-                <dt className="text-muted">Tenant ID</dt>
-                <dd className="font-mono text-foreground">
-                  {creds.tenant_id}
-                </dd>
-                <dt className="text-muted">Client ID</dt>
-                <dd className="font-mono text-foreground">
-                  {creds.client_id}
-                </dd>
-                <dt className="text-muted">Client Secret</dt>
-                <dd className="font-mono text-foreground">
-                  {creds.client_secret ? "****" : "Not saved"}
-                </dd>
-              </dl>
-
-              <div className="flex items-center gap-3 pt-1">
+            <div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 16 }}>
+                {[
+                  ["Subscription ID", creds.subscription_id],
+                  ["Tenant ID",       creds.tenant_id],
+                  ["Client ID",       creds.client_id],
+                  ["Client Secret",   creds.client_secret ? "••••••••" : "Not saved"],
+                ].map(([label, value]) => (
+                  <div key={label} style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
+                    <span style={{ width: 110, flexShrink: 0, fontSize: 11, color: COLORS.textMuted }}>{label}</span>
+                    <span style={{ fontSize: 12, color: COLORS.textSecondary, fontFamily: "monospace", wordBreak: "break-all" }}>{value}</span>
+                  </div>
+                ))}
+              </div>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
                 <button
                   type="button"
                   className="btn btn-danger btn-sm"
                   onClick={handleClearCredentials}
                 >
-                  <IconTrash size={14} />
-                  Clear Saved Credentials
+                  <IconTrash size={13} />
+                  Clear Credentials
                 </button>
-                {credentialsFeedback.message && (
-                  <FeedbackText text={credentialsFeedback.message} />
-                )}
+                {credentialsFeedback.message && <FeedbackText text={credentialsFeedback.message} />}
               </div>
             </div>
           ) : (
-            <p className="text-sm text-muted">No credentials saved</p>
+            <p style={{ fontSize: 13, color: COLORS.textMuted, margin: 0 }}>No credentials saved</p>
           )}
-        </section>
+        </SectionCard>
 
-        {/* ================================================================
-            2. Default Preferences
-            ================================================================ */}
-        <section
-          className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out 0.08s both" }}
-        >
-          <h2 className="mb-4 text-base font-semibold text-foreground">
-            Default Preferences
-          </h2>
-
-          <div className="space-y-4">
-            {/* Region */}
+        {/* ── Default Preferences ── */}
+        <SectionCard delay={0.04}>
+          <SectionHeader
+            icon={<IconSettings size={16} style={{ color: COLORS.indigo }} />}
+            title="Default Preferences"
+          />
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
-              <label
-                htmlFor="settings-region"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Default Region
-              </label>
+              <FieldLabel htmlFor="settings-region">Default Region</FieldLabel>
               <select
                 id="settings-region"
                 className="input"
@@ -337,21 +414,12 @@ export default function Settings({ onNavigate }: SettingsProps) {
                 onChange={(e) => setDefaultRegion(e.target.value)}
               >
                 {REGIONS.map((r) => (
-                  <option key={r.value} value={r.value}>
-                    {r.label}
-                  </option>
+                  <option key={r.value} value={r.value}>{r.label}</option>
                 ))}
               </select>
             </div>
-
-            {/* Models */}
             <div>
-              <label
-                htmlFor="settings-models"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Default Models
-              </label>
+              <FieldLabel htmlFor="settings-models">Default Models</FieldLabel>
               <input
                 id="settings-models"
                 type="text"
@@ -360,216 +428,119 @@ export default function Settings({ onNavigate }: SettingsProps) {
                 value={defaultModels}
                 onChange={(e) => setDefaultModels(e.target.value)}
               />
-              <p className="mt-1 text-xs text-muted">
-                Comma-separated model tags
-              </p>
+              <FieldHint>Comma-separated model tags</FieldHint>
             </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={handleSavePreferences}
-              >
-                <IconCheck size={14} />
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={handleSavePreferences}>
+                <IconCheck size={13} />
                 Save Preferences
               </button>
-              {preferencesFeedback.message && (
-                <FeedbackText text={preferencesFeedback.message} />
-              )}
+              {preferencesFeedback.message && <FeedbackText text={preferencesFeedback.message} />}
             </div>
           </div>
-        </section>
+        </SectionCard>
 
-        {/* ================================================================
-            3. Cost Budget
-            ================================================================ */}
-        <section
-          className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out 0.16s both" }}
-        >
-          <div className="mb-4 flex items-center gap-2">
-            <IconDollar size={18} className="text-accent" />
-            <h2 className="text-base font-semibold text-foreground">
-              Cost Budget
-            </h2>
-          </div>
-
-          <p className="mb-4 text-sm text-muted">
-            Set spending limits to automatically shut down resources when
-            exceeded. The backend monitors costs in real-time.
+        {/* ── Cost Budget ── */}
+        <SectionCard delay={0.08}>
+          <SectionHeader
+            icon={<IconDollar size={16} style={{ color: COLORS.indigo }} />}
+            title="Cost Budget"
+          />
+          <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 20px" }}>
+            Set spending limits to automatically shut down resources when exceeded.
           </p>
 
-          <div className="space-y-4">
-            {/* Enable toggle */}
-            <div className="flex items-center gap-3">
-              <label htmlFor="budget-enabled" className="text-sm font-medium text-muted">
-                Cost monitoring
-              </label>
-              <button
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <Toggle
                 id="budget-enabled"
-                type="button"
-                role="switch"
-                aria-checked={budgetEnabled}
-                onClick={() => setBudgetEnabled((prev) => !prev)}
-                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                  budgetEnabled ? "bg-[var(--accent)]" : "bg-[var(--border-color)]"
-                }`}
-              >
-                <span
-                  className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                    budgetEnabled ? "translate-x-6" : "translate-x-1"
-                  }`}
-                />
-              </button>
-              <span className="text-xs text-muted">
-                {budgetEnabled ? "Active" : "Disabled"}
-              </span>
+                checked={budgetEnabled}
+                onChange={() => setBudgetEnabled((p) => !p)}
+              />
+              <label htmlFor="budget-enabled" style={{ fontSize: 13, color: COLORS.textSecondary, cursor: "pointer" }}>
+                Cost monitoring {budgetEnabled ? "enabled" : "disabled"}
+              </label>
             </div>
 
-            {/* Max total spend */}
             <div>
-              <label
-                htmlFor="budget-total"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Maximum Total Spend (USD)
-              </label>
+              <FieldLabel htmlFor="budget-total">Maximum Total Spend (USD)</FieldLabel>
               <input
                 id="budget-total"
                 type="number"
                 className="input"
-                placeholder="e.g. 100.00 (0 = unlimited)"
+                placeholder="100.00 (0 = unlimited)"
                 value={maxTotalSpend}
                 onChange={(e) => setMaxTotalSpend(e.target.value)}
-                min="0"
-                step="1"
+                min="0" step="1"
               />
-              <p className="mt-1 text-xs text-muted">
-                Total spending limit across all deployments. Set to 0 or leave
-                empty for no limit.
-              </p>
+              <FieldHint>Total limit across all deployments. 0 or empty = no limit.</FieldHint>
             </div>
 
-            {/* Max per-deployment spend */}
             <div>
-              <label
-                htmlFor="budget-per-deploy"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Max Per-Deployment Spend (USD)
-              </label>
+              <FieldLabel htmlFor="budget-per-deploy">Max Per-Deployment Spend (USD)</FieldLabel>
               <input
                 id="budget-per-deploy"
                 type="number"
                 className="input"
-                placeholder="e.g. 50.00 (0 = unlimited)"
+                placeholder="50.00 (0 = unlimited)"
                 value={maxPerDeploySpend}
                 onChange={(e) => setMaxPerDeploySpend(e.target.value)}
-                min="0"
-                step="1"
+                min="0" step="1"
               />
-              <p className="mt-1 text-xs text-muted">
-                Individual deployment spending cap (overridable per-deployment)
-              </p>
             </div>
 
-            {/* Max hourly rate */}
             <div>
-              <label
-                htmlFor="budget-hourly"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Max Hourly Rate (USD/hr)
-              </label>
+              <FieldLabel htmlFor="budget-hourly">Max Hourly Rate (USD/hr)</FieldLabel>
               <input
                 id="budget-hourly"
                 type="number"
                 className="input"
-                placeholder="e.g. 40.00 (0 = unlimited)"
+                placeholder="40.00 (0 = unlimited)"
                 value={maxHourlyRate}
                 onChange={(e) => setMaxHourlyRate(e.target.value)}
-                min="0"
-                step="0.01"
+                min="0" step="0.01"
               />
-              <p className="mt-1 text-xs text-muted">
-                Alert when combined hourly rate of all running VMs exceeds this
-              </p>
+              <FieldHint>Alert when combined hourly rate of all running VMs exceeds this</FieldHint>
             </div>
 
-            {/* Action at 100% */}
             <div>
-              <label
-                htmlFor="budget-action"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Action When Budget Exceeded
-              </label>
+              <FieldLabel htmlFor="budget-action">Action When Budget Exceeded</FieldLabel>
               <select
                 id="budget-action"
                 className="input"
                 value={budgetActionAt100}
                 onChange={(e) => setBudgetActionAt100(e.target.value as BudgetAction)}
               >
-                <option value="alert">Alert only (notify but keep running)</option>
-                <option value="stop">Stop VMs (deallocate, preserves disks)</option>
-                <option value="destroy">Destroy all resources (irreversible)</option>
+                <option value="alert">Alert only — notify but keep running</option>
+                <option value="stop">Stop VMs — deallocate, preserves disks</option>
+                <option value="destroy">Destroy all resources — irreversible</option>
               </select>
-              <p className="mt-1 text-xs text-muted">
-                What happens when 100% of the budget is reached. Alerts at 50%
-                and 80% are always sent.
-              </p>
+              <FieldHint>Alerts at 50% and 80% are always sent regardless of this setting.</FieldHint>
             </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={handleSaveBudget}
-                disabled={budgetLoading}
-              >
-                {budgetLoading ? (
-                  <IconLoader size={14} />
-                ) : (
-                  <IconCheck size={14} />
-                )}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveBudget} disabled={budgetLoading}>
+                {budgetLoading ? <IconLoader size={13} /> : <IconCheck size={13} />}
                 Save Budget
               </button>
-              {budgetFeedback.message && (
-                <FeedbackText text={budgetFeedback.message} />
-              )}
+              {budgetFeedback.message && <FeedbackText text={budgetFeedback.message} />}
             </div>
           </div>
-        </section>
+        </SectionCard>
 
-        {/* ================================================================
-            4. Open WebUI Configuration
-            ================================================================ */}
-        <section
-          className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out 0.24s both" }}
-        >
-          <div className="mb-4 flex items-center gap-2">
-            <IconChat size={18} className="text-accent" />
-            <h2 className="text-base font-semibold text-foreground">
-              Open WebUI
-            </h2>
-          </div>
-
-          <p className="mb-4 text-sm text-muted">
-            Configure the local Open WebUI instance. Changes to a running
-            instance trigger an automatic restart.
+        {/* ── AI Engine Configuration ── */}
+        <SectionCard delay={0.12}>
+          <SectionHeader
+            icon={<IconChat size={16} style={{ color: COLORS.indigo }} />}
+            title="AI Engine Configuration"
+          />
+          <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 20px" }}>
+            Configure the local AI engine. Changes to a running instance trigger an automatic restart.
           </p>
 
-          <div className="space-y-4">
-            {/* Ollama URL */}
+          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
             <div>
-              <label
-                htmlFor="webui-ollama-urls"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Ollama Server URL(s)
-              </label>
+              <FieldLabel htmlFor="webui-ollama-urls">Ollama Server URL</FieldLabel>
               <input
                 id="webui-ollama-urls"
                 type="text"
@@ -578,42 +549,24 @@ export default function Settings({ onNavigate }: SettingsProps) {
                 value={webuiOllamaUrls}
                 onChange={(e) => setWebuiOllamaUrls(e.target.value)}
               />
-              <p className="mt-1 text-xs text-muted">
-                The Ollama API base URL from your provisioned cloud VM.
-                Semicolon-separated for multiple servers.
-              </p>
+              <FieldHint>Ollama API URL from your provisioned VM. Semicolon-separated for multiple.</FieldHint>
             </div>
 
-            {/* Port */}
             <div>
-              <label
-                htmlFor="webui-port"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Local Port
-              </label>
+              <FieldLabel htmlFor="webui-port">Local Port</FieldLabel>
               <input
                 id="webui-port"
                 type="number"
                 className="input"
                 value={webuiPort}
                 onChange={(e) => setWebuiPort(e.target.value)}
-                min="1024"
-                max="65535"
+                min="1024" max="65535"
               />
-              <p className="mt-1 text-xs text-muted">
-                Port Open WebUI listens on locally (default: 8080)
-              </p>
+              <FieldHint>Port the AI engine listens on (default: 8080)</FieldHint>
             </div>
 
-            {/* Display name */}
             <div>
-              <label
-                htmlFor="webui-name"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Display Name
-              </label>
+              <FieldLabel htmlFor="webui-name">Display Name</FieldLabel>
               <input
                 id="webui-name"
                 type="text"
@@ -623,14 +576,8 @@ export default function Settings({ onNavigate }: SettingsProps) {
               />
             </div>
 
-            {/* Default model */}
             <div>
-              <label
-                htmlFor="webui-default-models"
-                className="mb-1.5 block text-sm font-medium text-muted"
-              >
-                Default Model
-              </label>
+              <FieldLabel htmlFor="webui-default-models">Default Model</FieldLabel>
               <input
                 id="webui-default-models"
                 type="text"
@@ -641,202 +588,98 @@ export default function Settings({ onNavigate }: SettingsProps) {
               />
             </div>
 
-            {/* Toggles */}
-            <div className="flex flex-col gap-3">
-              <div className="flex items-center gap-3">
-                <label htmlFor="webui-signup" className="text-sm font-medium text-muted">
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Toggle id="webui-signup" checked={webuiEnableSignup} onChange={() => setWebuiEnableSignup((p) => !p)} />
+                <label htmlFor="webui-signup" style={{ fontSize: 13, color: COLORS.textSecondary, cursor: "pointer" }}>
                   Allow signups
                 </label>
-                <button
-                  id="webui-signup"
-                  type="button"
-                  role="switch"
-                  aria-checked={webuiEnableSignup}
-                  onClick={() => setWebuiEnableSignup((prev) => !prev)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    webuiEnableSignup ? "bg-[var(--accent)]" : "bg-[var(--border-color)]"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      webuiEnableSignup ? "translate-x-6" : "translate-x-1"
-                    }`}
-                  />
-                </button>
               </div>
-
-              <div className="flex items-center gap-3">
-                <label htmlFor="webui-rag" className="text-sm font-medium text-muted">
+              <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                <Toggle id="webui-rag" checked={webuiEnableRag} onChange={() => setWebuiEnableRag((p) => !p)} />
+                <label htmlFor="webui-rag" style={{ fontSize: 13, color: COLORS.textSecondary, cursor: "pointer" }}>
                   Enable RAG (document upload)
                 </label>
-                <button
-                  id="webui-rag"
-                  type="button"
-                  role="switch"
-                  aria-checked={webuiEnableRag}
-                  onClick={() => setWebuiEnableRag((prev) => !prev)}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
-                    webuiEnableRag ? "bg-[var(--accent)]" : "bg-[var(--border-color)]"
-                  }`}
-                >
-                  <span
-                    className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
-                      webuiEnableRag ? "translate-x-6" : "translate-x-1"
-                    }`}
-                  />
-                </button>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="btn btn-primary btn-sm"
-                onClick={handleSaveWebuiConfig}
-                disabled={webuiLoading}
-              >
-                {webuiLoading ? (
-                  <IconLoader size={14} />
-                ) : (
-                  <IconCheck size={14} />
-                )}
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" className="btn btn-primary btn-sm" onClick={handleSaveWebuiConfig} disabled={webuiLoading}>
+                {webuiLoading ? <IconLoader size={13} /> : <IconCheck size={13} />}
                 Save Configuration
               </button>
-              {webuiFeedback.message && (
-                <FeedbackText text={webuiFeedback.message} />
-              )}
+              {webuiFeedback.message && <FeedbackText text={webuiFeedback.message} />}
             </div>
           </div>
-        </section>
+        </SectionCard>
 
-        {/* ================================================================
-            5. Deployment History
-            ================================================================ */}
-        <section
-          className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out 0.32s both" }}
-        >
-          <div className="mb-4 flex items-center gap-2">
-            <IconClock size={18} className="text-accent" />
-            <h2 className="text-base font-semibold text-foreground">
-              Deployment History
-            </h2>
-          </div>
-
-          <p className="mb-3 text-sm text-muted">
+        {/* ── Deployment History ── */}
+        <SectionCard delay={0.16}>
+          <SectionHeader
+            icon={<IconClock size={16} style={{ color: COLORS.indigo }} />}
+            title="Deployment History"
+          />
+          <p style={{ fontSize: 13, color: COLORS.textMuted, margin: "0 0 16px" }}>
             {history.length === 0
               ? "No deployment records"
               : `${history.length} saved deployment${history.length === 1 ? "" : "s"}`}
           </p>
 
           {recentDeployments.length > 0 && (
-            <ul className="mb-4 space-y-2">
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
               {recentDeployments.map((d) => (
-                <li
+                <div
                   key={d.id}
-                  className="flex items-center justify-between rounded border border-border px-3 py-2 text-xs"
+                  style={{
+                    display: "flex", alignItems: "center", justifyContent: "space-between",
+                    padding: "10px 14px", borderRadius: 10,
+                    background: "rgba(255,255,255,0.025)", border: `1px solid ${COLORS.border}`,
+                  }}
                 >
-                  <span className="font-medium text-foreground">{d.name}</span>
-                  <span className="flex items-center gap-3">
-                    <StatusBadge status={d.status} />
-                    <span className="text-muted">
-                      {formatDate(d.created_at)}
-                    </span>
-                  </span>
-                </li>
+                  <span style={{ fontSize: 13, fontWeight: 500, color: COLORS.textSecondary }}>{d.name}</span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+                    <StatusPill status={d.status} />
+                    <span style={{ fontSize: 11, color: COLORS.textMuted }}>{formatDate(d.created_at)}</span>
+                  </div>
+                </div>
               ))}
-            </ul>
+            </div>
           )}
 
           {history.length > 0 && (
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="btn btn-danger btn-sm"
-                onClick={handleClearHistory}
-              >
-                <IconTrash size={14} />
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <button type="button" className="btn btn-danger btn-sm" onClick={handleClearHistory}>
+                <IconTrash size={13} />
                 {confirmClearHistory ? "Are you sure?" : "Clear History"}
               </button>
-              {historyFeedback.message && (
-                <FeedbackText text={historyFeedback.message} />
-              )}
+              {historyFeedback.message && <FeedbackText text={historyFeedback.message} />}
             </div>
           )}
-        </section>
+        </SectionCard>
 
-        {/* ================================================================
-            6. About
-            ================================================================ */}
-        <section
-          className="card p-5"
-          style={{ animation: "slide-up 0.3s ease-out 0.40s both" }}
-        >
-          <h2 className="mb-3 text-base font-semibold text-foreground">
+        {/* ── About ── */}
+        <SectionCard delay={0.2}>
+          <h2 style={{
+            fontFamily: "var(--font-syne), Syne, sans-serif",
+            fontSize: 15, fontWeight: 700, color: COLORS.textPrimary,
+            margin: "0 0 12px", letterSpacing: "-0.01em",
+          }}>
             About
           </h2>
-
-          <div className="space-y-1 text-sm">
-            <p className="text-foreground">
-              PrivateAI{" "}
-              <span className="ml-1 rounded bg-surface-hover px-1.5 py-0.5 font-mono text-xs text-muted">
-                v0.2.0
-              </span>
-            </p>
-            <p className="text-muted">
-              Private AI infrastructure deployment
-            </p>
-            <a
-              href="#"
-              className="mt-2 inline-block text-sm text-accent hover:underline"
-            >
-              GitHub
-            </a>
+          <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+            <span style={{ fontSize: 14, color: COLORS.textSecondary }}>PrivateAI</span>
+            <span style={{
+              fontSize: 10, fontWeight: 700, color: COLORS.textMuted,
+              background: "rgba(255,255,255,0.05)", border: `1px solid ${COLORS.border}`,
+              borderRadius: 5, padding: "2px 7px", fontFamily: "monospace",
+            }}>v0.2.0</span>
           </div>
-        </section>
+          <p style={{ fontSize: 12, color: COLORS.textMuted, margin: 0 }}>
+            Private AI infrastructure deployment
+          </p>
+        </SectionCard>
+
       </div>
     </div>
   );
-}
-
-// ---------------------------------------------------------------------------
-// Sub-components
-// ---------------------------------------------------------------------------
-
-function FeedbackText({ text }: { text: string }) {
-  return (
-    <span
-      className="text-xs font-medium text-success"
-      style={{ animation: "fade-in 0.15s ease-out" }}
-    >
-      {text}
-    </span>
-  );
-}
-
-function StatusBadge({ status }: { status: string }) {
-  const colorMap: Record<string, string> = {
-    running: "badge-success",
-    failed: "badge-error",
-    destroyed: "badge-muted",
-    stopped: "badge-warning",
-  };
-  const cls = colorMap[status] ?? "badge-accent";
-  return <span className={`badge ${cls}`}>{status}</span>;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function formatDate(iso: string): string {
-  try {
-    return new Date(iso).toLocaleDateString(undefined, {
-      month: "short",
-      day: "numeric",
-      year: "numeric",
-    });
-  } catch {
-    return iso;
-  }
 }

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { COLORS } from "@/app/lib/colors";
 import {
   IconHome,
   IconPlus,
@@ -10,7 +11,6 @@ import {
   IconLoader,
   IconPlay,
   IconStop,
-  IconExternalLink,
 } from "./icons";
 import {
   fetchOpenWebuiStatus,
@@ -25,31 +25,23 @@ interface NavItem {
   id: string;
   label: string;
   page: string;
-  icon: React.ComponentType<{ size?: number; className?: string }>;
+  icon: React.ComponentType<{ size?: number; style?: React.CSSProperties }>;
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "home", label: "Home", page: "dashboard", icon: IconHome },
-  { id: "deploy", label: "New Deployment", page: "provision", icon: IconPlus },
-  { id: "settings", label: "Settings", page: "settings", icon: IconSettings },
+  { id: "home",     label: "Dashboard",       page: "dashboard", icon: IconHome },
+  { id: "deploy",   label: "New Deployment",  page: "provision", icon: IconPlus },
+  { id: "settings", label: "Settings",        page: "settings",  icon: IconSettings },
 ];
 
 function readCollapsed(): boolean {
   if (typeof window === "undefined") return false;
-  try {
-    return window.localStorage.getItem(STORAGE_KEY) === "true";
-  } catch {
-    return false;
-  }
+  try { return window.localStorage.getItem(STORAGE_KEY) === "true"; } catch { return false; }
 }
 
 function writeCollapsed(value: boolean): void {
   if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(STORAGE_KEY, String(value));
-  } catch {
-    // Ignore storage errors
-  }
+  try { window.localStorage.setItem(STORAGE_KEY, String(value)); } catch {}
 }
 
 interface SidebarProps {
@@ -58,13 +50,10 @@ interface SidebarProps {
   onCollapsedChange?: (collapsed: boolean) => void;
 }
 
-export default function Sidebar({
-  currentPage,
-  onNavigate,
-  onCollapsedChange,
-}: SidebarProps) {
-  const [collapsed, setCollapsed] = useState<boolean>(false);
-  const [mounted, setMounted] = useState<boolean>(false);
+export default function Sidebar({ currentPage, onNavigate, onCollapsedChange }: SidebarProps) {
+  const [collapsed, setCollapsed] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const [hoveredItem, setHoveredItem] = useState<string | null>(null);
 
   useEffect(() => {
     const stored = readCollapsed();
@@ -74,53 +63,100 @@ export default function Sidebar({
   }, [onCollapsedChange]);
 
   const toggleCollapsed = useCallback(() => {
-    setCollapsed((prev) => {
-      const next = !prev;
-      writeCollapsed(next);
-      onCollapsedChange?.(next);
-      return next;
-    });
-  }, [onCollapsedChange]);
+    const next = !collapsed;
+    setCollapsed(next);
+    writeCollapsed(next);
+    onCollapsedChange?.(next);
+  }, [collapsed, onCollapsedChange]);
 
-  // Avoid hydration mismatch: render expanded by default, then correct on mount
   const isCollapsed = mounted ? collapsed : false;
+  const width = isCollapsed ? 64 : 220;
 
   return (
-    <aside
-      className={`sidebar ${isCollapsed ? "sidebar-collapsed" : "sidebar-expanded"} fixed left-0 top-0 z-40 flex h-screen flex-col border-r border-border bg-surface`}
-      style={{ transition: "width 300ms ease" }}
-    >
+    <aside style={{
+      position: "fixed", left: 0, top: 0, zIndex: 40,
+      width, height: "100vh",
+      display: "flex", flexDirection: "column",
+      background: COLORS.bg,
+      borderRight: `1px solid ${COLORS.border}`,
+      transition: "width 300ms ease",
+      overflow: "hidden",
+    }}>
+
       {/* Logo */}
-      <div className="flex h-14 items-center border-b border-border px-4">
-        <span className="text-lg font-bold text-foreground truncate">
-          {isCollapsed ? "P" : "PrivateAI"}
-        </span>
+      <div style={{
+        height: 60, flexShrink: 0,
+        display: "flex", alignItems: "center",
+        padding: isCollapsed ? "0 16px" : "0 18px",
+        borderBottom: `1px solid ${COLORS.border}`,
+      }}>
+        <div style={{
+          width: 32, height: 32, borderRadius: 9, flexShrink: 0,
+          background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)",
+          display: "flex", alignItems: "center", justifyContent: "center",
+        }}>
+          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <path d="M8 2L13 4v4c0 3-2.5 5-5 6-2.5-1-5-3-5-6V4l5-2z"
+              stroke={COLORS.indigoLight} strokeWidth="1.3"
+              fill={`rgba(99,102,241,0.18)`} />
+            <path d="M6 8l1.5 1.5L10 6.5"
+              stroke={COLORS.indigoLight} strokeWidth="1.4"
+              strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </div>
+        {!isCollapsed && (
+          <span style={{
+            marginLeft: 10, fontFamily: "var(--font-syne), Syne, sans-serif",
+            fontSize: 15, fontWeight: 700, color: COLORS.textPrimary,
+            letterSpacing: "-0.02em", whiteSpace: "nowrap",
+          }}>
+            PrivateAI
+          </span>
+        )}
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 overflow-y-auto py-3">
-        <ul className="flex flex-col gap-1 px-2">
+      <nav style={{ flex: 1, overflowY: "auto", padding: "10px 0" }}>
+        <ul style={{ listStyle: "none", margin: 0, padding: "0 8px", display: "flex", flexDirection: "column", gap: 2 }}>
           {NAV_ITEMS.map((item) => {
             const isActive = currentPage === item.page;
+            const isHovered = hoveredItem === item.id;
             const Icon = item.icon;
 
             return (
               <li key={item.id}>
                 <button
-                  onClick={() => onNavigate(item.page)}
+                  type="button"
                   title={isCollapsed ? item.label : undefined}
-                  className={`btn-ghost flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors duration-150 ${
-                    isActive
-                      ? "bg-[var(--accent-subtle)] text-accent"
-                      : "text-muted hover:bg-surface-hover hover:text-foreground"
-                  }`}
+                  onClick={() => onNavigate(item.page)}
+                  onMouseEnter={() => setHoveredItem(item.id)}
+                  onMouseLeave={() => setHoveredItem(null)}
+                  style={{
+                    width: "100%",
+                    display: "flex", alignItems: "center",
+                    gap: 10,
+                    padding: isCollapsed ? "10px 0" : "10px 12px",
+                    justifyContent: isCollapsed ? "center" : "flex-start",
+                    background: isActive
+                      ? "rgba(99,102,241,0.12)"
+                      : isHovered
+                        ? COLORS.bgCardHover
+                        : "transparent",
+                    border: "none", borderRadius: 10, cursor: "pointer",
+                    color: isActive ? COLORS.indigoLight : isHovered ? COLORS.textSecondary : COLORS.textMuted,
+                    fontSize: 13, fontWeight: isActive ? 600 : 500,
+                    fontFamily: "inherit", transition: "background 0.15s, color 0.15s",
+                  }}
                 >
                   <Icon
-                    size={20}
-                    className={`shrink-0 ${isActive ? "text-accent" : ""}`}
+                    size={18}
+                    style={{
+                      color: isActive ? COLORS.indigoLight : isHovered ? COLORS.textSecondary : COLORS.textMuted,
+                      flexShrink: 0,
+                    }}
                   />
                   {!isCollapsed && (
-                    <span className="truncate">{item.label}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>{item.label}</span>
                   )}
                 </button>
               </li>
@@ -129,21 +165,28 @@ export default function Sidebar({
         </ul>
       </nav>
 
-      {/* Open WebUI status */}
+      {/* AI engine status */}
       <SidebarWebUI collapsed={isCollapsed} />
 
       {/* Collapse toggle */}
-      <div className="border-t border-border p-2">
+      <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: 8, flexShrink: 0 }}>
         <button
-          onClick={toggleCollapsed}
-          className="btn btn-ghost btn-icon w-full flex items-center justify-center"
+          type="button"
           title={isCollapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onClick={toggleCollapsed}
+          style={{
+            width: "100%", display: "flex", alignItems: "center", justifyContent: "center",
+            background: "none", border: "none", cursor: "pointer",
+            padding: 8, borderRadius: 8, color: COLORS.textMuted,
+          }}
         >
           <IconChevronRight
-            size={18}
-            className={`transition-transform duration-300 ${
-              isCollapsed ? "" : "rotate-180"
-            }`}
+            size={15}
+            style={{
+              color: COLORS.textMuted,
+              transition: "transform 0.3s ease",
+              transform: isCollapsed ? "none" : "rotate(180deg)",
+            }}
           />
         </button>
       </div>
@@ -152,7 +195,7 @@ export default function Sidebar({
 }
 
 // ---------------------------------------------------------------------------
-// Sidebar Open WebUI widget
+// AI engine status widget
 // ---------------------------------------------------------------------------
 
 function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
@@ -165,16 +208,11 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
       try {
         const s = await fetchOpenWebuiStatus();
         if (active) setState(s);
-      } catch {
-        // ignore
-      }
+      } catch {}
     };
     poll();
     const id = setInterval(poll, 8000);
-    return () => {
-      active = false;
-      clearInterval(id);
-    };
+    return () => { active = false; clearInterval(id); };
   }, []);
 
   const handleToggle = useCallback(async () => {
@@ -188,9 +226,7 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
       }
       const s = await fetchOpenWebuiStatus();
       setState(s);
-    } catch {
-      // ignore
-    } finally {
+    } catch {} finally {
       setActionLoading(false);
     }
   }, [state]);
@@ -198,91 +234,104 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
   if (!state) return null;
 
   const isRunning = state.status === "running";
-  const dotColor = isRunning
-    ? "bg-[var(--success)]"
-    : state.status === "error"
-      ? "bg-[var(--error)]"
-      : "bg-[var(--muted)]";
+  const dotColor = isRunning ? "#4ade80" : state.status === "error" ? "#f87171" : COLORS.textMuted;
+  const canToggle = !actionLoading && state.status !== "not_installed" && state.status !== "starting" && state.status !== "stopping";
 
   if (collapsed) {
     return (
-      <div className="border-t border-border p-2 flex flex-col items-center gap-1.5">
+      <div style={{
+        borderTop: `1px solid ${COLORS.border}`,
+        padding: "10px 0",
+        display: "flex", flexDirection: "column", alignItems: "center",
+      }}>
         <button
-          onClick={handleToggle}
-          disabled={actionLoading || state.status === "not_installed"}
+          type="button"
+          onClick={canToggle ? handleToggle : undefined}
+          disabled={!canToggle}
           title={
             isRunning
-              ? `Open WebUI running${state.connected_deployment_name ? ` — ${state.connected_deployment_name}` : ""}`
-              : "Start Open WebUI"
+              ? `AI engine${state.connected_deployment_name ? ` — ${state.connected_deployment_name}` : ""}`
+              : "Start AI engine"
           }
-          className="btn btn-ghost btn-icon relative"
+          style={{
+            position: "relative", display: "flex",
+            alignItems: "center", justifyContent: "center",
+            width: 36, height: 36, borderRadius: 9,
+            background: "none", border: "none",
+            cursor: canToggle ? "pointer" : "default",
+          }}
         >
-          {actionLoading ? (
-            <IconLoader size={16} className="text-[var(--muted)]" />
-          ) : (
-            <IconChat size={16} className={isRunning ? "text-[var(--accent)]" : "text-[var(--muted)]"} />
-          )}
-          <span className={`absolute top-0.5 right-0.5 h-2 w-2 rounded-full ${dotColor}`} />
+          {actionLoading
+            ? <IconLoader size={15} style={{ color: COLORS.textMuted }} />
+            : <IconChat size={15} style={{ color: isRunning ? COLORS.indigoLight : COLORS.textMuted }} />
+          }
+          <span style={{
+            position: "absolute", top: 5, right: 5,
+            width: 7, height: 7, borderRadius: "50%",
+            background: dotColor, border: `2px solid ${COLORS.bg}`,
+          }} />
         </button>
       </div>
     );
   }
 
   return (
-    <div className="border-t border-border px-3 py-3 flex flex-col gap-2">
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-2 min-w-0">
-          <IconChat size={14} className="shrink-0 text-[var(--accent)]" />
-          <span className="text-xs font-medium text-[var(--fg)] truncate">
-            Open WebUI
-          </span>
-          <span className={`h-2 w-2 rounded-full shrink-0 ${dotColor}`} />
-        </div>
-        <div className="flex items-center gap-1">
-          {isRunning && state.url && (
-            <a
-              href={state.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="btn btn-ghost btn-icon btn-sm"
-              title="Open in browser"
-            >
-              <IconExternalLink size={12} />
-            </a>
-          )}
-          <button
-            onClick={handleToggle}
-            disabled={actionLoading || state.status === "not_installed" || state.status === "starting" || state.status === "stopping"}
-            className="btn btn-ghost btn-icon btn-sm"
-            title={isRunning ? "Stop" : "Start"}
-          >
-            {actionLoading ? (
-              <IconLoader size={12} />
-            ) : isRunning ? (
-              <IconStop size={12} className="text-[var(--error)]" />
-            ) : (
-              <IconPlay size={12} className="text-[var(--success)]" />
-            )}
-          </button>
-        </div>
+    <div style={{
+      borderTop: `1px solid ${COLORS.border}`,
+      padding: "12px 16px",
+      display: "flex", flexDirection: "column", gap: 6,
+      flexShrink: 0,
+    }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <IconChat size={13} style={{ color: isRunning ? COLORS.indigoLight : COLORS.textMuted, flexShrink: 0 }} />
+        <span style={{ fontSize: 12, fontWeight: 500, color: COLORS.textSecondary, flex: 1, whiteSpace: "nowrap" }}>
+          AI engine
+        </span>
+        <span style={{
+          width: 7, height: 7, borderRadius: "50%", flexShrink: 0,
+          background: dotColor,
+          boxShadow: isRunning ? `0 0 5px ${dotColor}` : "none",
+          display: "inline-block",
+        }} />
+        <button
+          type="button"
+          onClick={canToggle ? handleToggle : undefined}
+          disabled={!canToggle}
+          title={isRunning ? "Stop" : "Start"}
+          style={{
+            display: "flex", alignItems: "center", justifyContent: "center",
+            width: 24, height: 24, borderRadius: 6,
+            background: "none", border: `1px solid ${COLORS.border}`,
+            cursor: canToggle ? "pointer" : "default",
+          }}
+        >
+          {actionLoading
+            ? <IconLoader size={11} style={{ color: COLORS.textMuted }} />
+            : isRunning
+              ? <IconStop size={11} style={{ color: "#f87171" }} />
+              : <IconPlay size={11} style={{ color: "#4ade80" }} />
+          }
+        </button>
       </div>
 
-      {/* Connected deployment */}
       {isRunning && state.connected_deployment_name && (
-        <p className="text-[10px] text-[var(--muted)] truncate pl-5">
-          Connected to {state.connected_deployment_name}
+        <p style={{
+          fontSize: 10, color: COLORS.textMuted, margin: 0, paddingLeft: 21,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
+          {state.connected_deployment_name}
         </p>
       )}
-
-      {/* Error */}
       {state.status === "error" && (
-        <p className="text-[10px] text-[var(--error)] truncate pl-5">
+        <p style={{
+          fontSize: 10, color: "#f87171", margin: 0, paddingLeft: 21,
+          overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
+        }}>
           {state.error}
         </p>
       )}
-
       {state.status === "not_installed" && (
-        <p className="text-[10px] text-[var(--muted)] pl-5">
+        <p style={{ fontSize: 10, color: COLORS.textMuted, margin: 0, paddingLeft: 21 }}>
           Not installed
         </p>
       )}

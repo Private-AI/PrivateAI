@@ -310,38 +310,60 @@ class OpenWebuiManager:
     async def update_ollama_url(self, ollama_url: str) -> None:
         """Update the Ollama base URL in the running Open WebUI instance.
 
-        Calls the Open WebUI admin API — no restart required.
-        Also updates self._config so future restarts use the correct URL.
+        Open WebUI's PersistentConfig stores Ollama URLs in SQLite — the env
+        var only applies on the very first startup.  Subsequent restarts use
+        the DB value, so we must update it via the admin API every time the
+        tunnel URL changes (different local port on each connect).
         """
         with self._lock:
             self._config.ollama_base_urls = ollama_url
             port = self._config.port
 
         api = f"http://localhost:{port}"
+        email = "privateai@local"
+        password = "privateai-local-only-2024"
+
         async with httpx.AsyncClient() as client:
+            # Acquire auth token — required even with WEBUI_AUTH=False
+            token: str | None = None
+            for endpoint, body in [
+                ("/api/v1/auths/signin", {"email": email, "password": password}),
+                ("/api/v1/auths/signup", {"name": "PrivateAI", "email": email, "password": password}),
+            ]:
+                try:
+                    r = await client.post(f"{api}{endpoint}", json=body, timeout=10)
+                    if r.status_code == 200:
+                        token = r.json().get("token")
+                        if token:
+                            break
+                except Exception:
+                    pass
+
+            if not token:
+                logger.warning("Could not acquire token to update Ollama URL — will take effect on next restart")
+                return
+
+            headers = {"Authorization": f"Bearer {token}"}
             try:
-                # Open WebUI API: update Ollama connection URL
-                # Works without auth token when WEBUI_AUTH=false
                 r = await client.post(
-                    f"{api}/api/v1/configs/ollama",
-                    json={"url": ollama_url},
+                    f"{api}/ollama/config/update",
+                    json={
+                        "OLLAMA_BASE_URLS": [ollama_url],
+                        "OLLAMA_API_CONFIGS": {},
+                        "ENABLE_OLLAMA_API": True,
+                    },
+                    headers=headers,
                     timeout=5,
                 )
                 if r.status_code < 300:
                     logger.info("Updated Ollama URL to %s via API", ollama_url)
                     return
-                # Fallback: older endpoint
-                r = await client.post(
-                    f"{api}/ollama/config/update",
-                    json={"url": ollama_url, "enable": True},
-                    timeout=5,
+                logger.warning(
+                    "Ollama URL API update returned %d — tunnel connected but Open WebUI may need a restart",
+                    r.status_code,
                 )
-                if r.status_code < 300:
-                    logger.info("Updated Ollama URL to %s via legacy API", ollama_url)
-                    return
-                logger.debug("Ollama URL API update returned %d — will take effect on next restart", r.status_code)
             except Exception as e:
-                logger.debug("Could not update Ollama URL via API: %s", e)
+                logger.warning("Could not update Ollama URL via API: %s", e)
 
     # ── Health checking ──────────────────────────────────────
 
