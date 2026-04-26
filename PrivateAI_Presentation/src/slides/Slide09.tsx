@@ -1,4 +1,4 @@
-import { DemoVideo, GlowBlob, SectionTag, Sep, SlideNum } from '../components'
+import { DemoVideo, GlowBlob, PresenterCam, SectionTag, Sep, SlideNum } from '../components'
 
 export default function Slide09() {
   return (
@@ -36,10 +36,22 @@ export default function Slide09() {
 
         <DemoVideo
           label="Demo 1 - Azure Setup"
-          videoSrc="/videos/demo1.webm"
+          videoSrc="/videos/Azure.mp4"
+          playbackRate={2.05}
           style={{ flex: 1, height: 700 }}
         />
       </div>
+
+      <PresenterCam
+        width={220}
+        height={220}
+        style={{ position: 'absolute', bottom: 60, left: 80 }}
+        videoSrc="/videos/Slide9.mp4"
+        videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+        muted={false}
+        loop={false}
+        logoPattern
+      />
 
       <SlideNum n={9} />
     </div>

@@ -792,9 +792,9 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
     setChatError(null);
     try {
       const result = await connectOpenWebuiToDeployment(deploymentId, deploymentName);
-      if (result.success && result.state.url) {
+      if (result.success) {
         setConnectedDeploymentId(deploymentId);
-        setOpenPanel({ type: "chat", url: result.state.url });
+        setOpenPanel({ type: "chat", url: result.state?.url ?? "" });
       } else {
         setChatError(result.message || "Open WebUI failed to start");
       }

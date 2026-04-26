@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { GlowBlob, SectionTag, SlideNum } from '../components'
+import { GlowBlob, PresenterCam, SectionTag, SlideNum } from '../components'
 
 interface Member {
   name: string
@@ -17,7 +17,7 @@ interface Member {
 
 const MEMBERS: Member[] = [
   {
-    name: 'Zahead Rasheedi',
+    name: 'Zahead Rashidi',
     role: 'Co-founder',
     color: 'var(--indigo-light)',
     accent: 'accent-teal',
@@ -114,6 +114,18 @@ export default function Slide13() {
           {MEMBERS.map((m) => <MemberCard key={m.name} m={m} />)}
         </div>
       </div>
+
+      <PresenterCam
+        width={180}
+        height={180}
+        style={{ position: 'absolute', top: 92, right: 82 }}
+        videoSrc="/videos/Slide13.mp4"
+        videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+        muted={false}
+        loop={false}
+        logoPattern
+        onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+      />
 
       <SlideNum n={13} />
     </div>

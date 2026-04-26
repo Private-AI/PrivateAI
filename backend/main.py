@@ -73,14 +73,17 @@ app.include_router(terminal.router)
 @app.on_event("startup")
 async def _startup() -> None:
     import asyncio
+    from app.providers.registry import is_test_mode
     from app.services.cost_monitor import get_cost_monitor
     from app.services.open_webui_manager import get_open_webui_manager
 
     get_cost_monitor().start()
     manager = get_open_webui_manager()
     manager.start_health_loop()
-    # Start Open WebUI in the background so it's ready before first user click
-    asyncio.create_task(_start_open_webui(manager))
+    if not is_test_mode():
+        # Start Open WebUI in the background so it's ready before first user click.
+        # Skipped in test mode — no real Ollama backend to connect to.
+        asyncio.create_task(_start_open_webui(manager))
 
 
 async def _start_open_webui(manager) -> None:

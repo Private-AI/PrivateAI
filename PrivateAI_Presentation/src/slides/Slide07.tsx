@@ -1,4 +1,4 @@
-import { GlowBlob, SectionTag, SlideNum } from '../components'
+import { GlowBlob, PresenterCam, SectionTag, SlideNum } from '../components'
 
 export default function Slide07() {
   return (
@@ -64,6 +64,18 @@ export default function Slide07() {
           </div>
         </div>
       </div>
+
+      <PresenterCam
+        width={180}
+        height={180}
+        style={{ position: 'absolute', top: 72, right: 96 }}
+        videoSrc="/videos/Slide7.mp4"
+        videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+        muted={false}
+        loop={false}
+        logoPattern
+        onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+      />
 
       <SlideNum n={7} />
     </div>

@@ -150,9 +150,8 @@ class MockProvider(CloudProviderBase):
             step = StepProgress(step=step_id, label=label, status="in_progress", started_at=now)
             steps.append(step)
             if progress_callback:
-                progress_callback(step_id, i + 1, total, f"Creating {label}...")
-            # Simulate real-world timing
-            delay = 1.5 if step_id == "vm" else 0.5
+                progress_callback(step_id, "in_progress", i + 1, total, f"Creating {label}...")
+            delay = 1.0 if step_id == "vm" else 0.3
             await asyncio.sleep(delay)
             step.status = "completed"
             step.completed_at = datetime.now(timezone.utc)
@@ -195,8 +194,8 @@ class MockProvider(CloudProviderBase):
             step = StepProgress(step=step_id, label=label, status="in_progress", started_at=now)
             steps.append(step)
             if progress_callback:
-                progress_callback(step_id, i + 1, total, label)
-            delay = 1.0 if step_id == "pull_models" else 0.4
+                progress_callback(step_id, "in_progress", i + 1, total, label)
+            delay = 0.8 if step_id == "pull_models" else 0.25
             await asyncio.sleep(delay)
             step.status = "completed"
             step.completed_at = datetime.now(timezone.utc)
@@ -286,3 +285,63 @@ class MockProvider(CloudProviderBase):
         ssh = f"ssh azureuser@{public_ip}" if public_ip else ""
         ollama = f"http://{public_ip}:11434" if public_ip else ""
         return ServiceEndpoints(ssh=ssh, ollama_api=ollama)
+
+    # ── Model management ─────────────────────────────────────
+
+    async def list_models(
+        self,
+        config: DeploymentConfig,
+        public_ip: str,
+        ssh_private_key: str,
+    ) -> list[dict[str, Any]]:
+        await asyncio.sleep(0.3)
+        return [
+            {
+                "name": "gemma3:4b",
+                "size": 3_300_000_000,
+                "modified_at": "2025-04-14T11:18:02Z",
+                "digest": "a2af6cc3eb7f",
+                "details": {"family": "gemma3", "parameter_size": "4B"},
+            },
+            {
+                "name": "llama3.2:3b",
+                "size": 2_100_000_000,
+                "modified_at": "2025-04-12T09:00:00Z",
+                "digest": "dde5aa3fc5ff",
+                "details": {"family": "llama", "parameter_size": "3B"},
+            },
+        ]
+
+    async def pull_model(
+        self,
+        config: DeploymentConfig,
+        public_ip: str,
+        ssh_private_key: str,
+        model: str,
+    ) -> dict[str, Any]:
+        await asyncio.sleep(1.5)
+        return {"success": True}
+
+    async def delete_model(
+        self,
+        config: DeploymentConfig,
+        public_ip: str,
+        ssh_private_key: str,
+        model: str,
+    ) -> dict[str, Any]:
+        await asyncio.sleep(0.5)
+        return {"success": True}
+
+    # ── Permissions ──────────────────────────────────────────
+
+    async def setup_permissions(self, credentials: Credentials) -> dict[str, Any]:
+        await asyncio.sleep(0.3)
+        return {
+            "success": True,
+            "message": "Test mode: all provider namespaces already registered.",
+            "providers": {
+                "Microsoft.Compute": "already_registered",
+                "Microsoft.Network": "already_registered",
+                "Microsoft.Storage": "already_registered",
+            },
+        }
