@@ -1,8 +1,9 @@
 name: Docker Image CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: ["master"]
+    branches: ["master", "feat/github-actions-docker"]
 
 jobs:
   build:
@@ -23,13 +24,22 @@ jobs:
           OWNER_LOWER="$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')"
           echo "IMAGE=ghcr.io/$OWNER_LOWER/app" >> "$GITHUB_ENV"
 
+      - name: Set image tags
+        run: |
+          if [ "${{ github.ref_name }}" = "master" ]; then
+            echo "PRIMARY_TAG=latest" >> "$GITHUB_ENV"
+          else
+            BRANCH_TAG="$(echo '${{ github.ref_name }}' | tr '/' '-')"
+            echo "PRIMARY_TAG=$BRANCH_TAG" >> "$GITHUB_ENV"
+          fi
+
       - name: Build image
         run: |
           docker build . \
-            --tag $IMAGE:latest \
+            --tag $IMAGE:$PRIMARY_TAG \
             --tag $IMAGE:${{ github.sha }}
 
       - name: Push image
         run: |
-          docker push $IMAGE:latest
+          docker push $IMAGE:$PRIMARY_TAG
           docker push $IMAGE:${{ github.sha }}
