@@ -1,0 +1,43 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.prod
+      args:
+        # Baked into the Next.js JS bundle at build time — must be your public HTTPS URL
+        NEXT_PUBLIC_API_URL: ${DOMAIN_URL:?Set DOMAIN_URL in .env.prod (e.g. https://myapp.duckdns.org)}
+    image: privateai:latest
+    container_name: privateai-app
+    env_file: .env.prod
+    volumes:
+      - open-webui-data:/app/open-webui-data
+    networks:
+      - privateai-net
+    restart: unless-stopped
+
+  caddy:
+    image: caddy:2-alpine
+    container_name: privateai-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8443:8443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data      # Caddy stores certs here (persisted across restarts)
+      - caddy-config:/config
+    env_file: .env.prod
+    depends_on:
+      - app
+    networks:
+      - privateai-net
+    restart: unless-stopped
+
+volumes:
+  open-webui-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  privateai-net:
+    driver: bridge

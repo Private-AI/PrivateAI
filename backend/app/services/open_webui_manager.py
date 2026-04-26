@@ -82,12 +82,16 @@ class OpenWebuiManager:
             if self._status == OpenWebuiStatus.RUNNING and self._started_at > 0:
                 uptime = time.time() - self._started_at
 
+            if self._status == OpenWebuiStatus.RUNNING:
+                public_url = os.environ.get("OPEN_WEBUI_PUBLIC_URL", "")
+                url = public_url or f"http://localhost:{self._config.port}"
+            else:
+                url = ""
+
             return OpenWebuiState(
                 status=self._status,
                 pid=self._process.pid if self._process else None,
-                url=f"http://localhost:{self._config.port}"
-                if self._status == OpenWebuiStatus.RUNNING
-                else "",
+                url=url,
                 config=self._config.model_copy(),
                 error=self._error,
                 uptime_seconds=round(uptime, 1),

@@ -1,0 +1,26 @@
+# Build artifacts
+frontend/.next/
+frontend/node_modules/
+backend/__pycache__/
+backend/**/__pycache__/
+backend/**/*.pyc
+
+# Dev data
+open-webui-data/
+
+# Secrets and env
+.env
+.env.prod
+*.env
+
+# VCS
+.git/
+.gitignore
+
+# Dev tools
+.vscode/
+.idea/
+*.log
+
+# Presentation (not part of the app)
+PrivateAI_Presentation/
