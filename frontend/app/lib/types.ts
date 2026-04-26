@@ -105,6 +105,7 @@ export interface ProviderInfo {
   id: string;
   display_name: string;
   regions: ProviderRegion[];
+  available?: boolean;
 }
 
 export interface VMSize {
