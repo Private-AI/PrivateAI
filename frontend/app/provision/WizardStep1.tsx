@@ -14,6 +14,10 @@ interface Props {
   onBack: () => void;
 }
 
+type ProviderOption = ProviderInfo & {
+  available?: boolean;
+};
+
 const PROVIDER_META: Record<string, { desc: string; tag: string; logo: React.ReactNode; pillColor: "indigo" | "teal" | "lavender" }> = {
   azure: { desc: "Trusted by enterprise worldwide",       tag: "Most popular",   logo: <AzureLogo size={36} />,    pillColor: "indigo" },
   aws:   { desc: "Vast global infrastructure",            tag: "Highly scalable", logo: <AWSLogo size={36} />,      pillColor: "teal" },
@@ -23,7 +27,7 @@ const PROVIDER_META: Record<string, { desc: string; tag: string; logo: React.Rea
 const FALLBACK_META = { desc: "Alternative cloud hosting", tag: "Coming soon", logo: <EvernodeLogo size={36} />, pillColor: "indigo" as const };
 
 export default function WizardStep1({ providers, loading, error, selected, onSelect, onBack }: Props) {
-  const items = providers.length > 0 ? providers : [
+  const items: ProviderOption[] = providers.length > 0 ? providers : [
     { id: "azure", display_name: "Microsoft Azure", regions: [], available: true },
     { id: "aws",   display_name: "Amazon AWS",       regions: [], available: false },
     { id: "gcp",   display_name: "Google Cloud",     regions: [], available: false },

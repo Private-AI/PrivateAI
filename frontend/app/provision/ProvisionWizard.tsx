@@ -223,7 +223,7 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     const effectiveKey = connectedVia ? getCredentialKey(buildAzureCredentials(credForm)) : validatedCredentialsKey;
     if (effectiveKey) {
       if (credForm.saveCredentials) {
-        saveSettings({ savedCredentials: { provider: "azure", ...buildAzureCredentials(credForm) } });
+        saveSettings({ savedCredentials: buildAzureCredentials(credForm) });
       }
     }
     setStep(2);
@@ -278,21 +278,21 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
 
       const hasDisk = disks.data > 0;
       setProvisionSteps([
-        { step: "resource_group", label: "Reserving your private cloud space",  status: "pending", detail: "" },
-        { step: "nsg",            label: "Locking down your AI server",          status: "pending", detail: "" },
-        { step: "vnet",           label: "Building your private network",        status: "pending", detail: "" },
-        { step: "public_ip",      label: "Getting your server online",           status: "pending", detail: "" },
-        { step: "nic",            label: "Connecting the network",               status: "pending", detail: "" },
-        { step: "vm",             label: "Booting up your AI server",            status: "pending", detail: "" },
-        ...(hasDisk ? [{ step: "data_disk", label: "Adding storage for your models", status: "pending" as const, detail: "" }] : []),
+        { step: "resource_group", label: "Reserving your private cloud space",  status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "nsg",            label: "Locking down your AI server",          status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "vnet",           label: "Building your private network",        status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "public_ip",      label: "Getting your server online",           status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "nic",            label: "Connecting the network",               status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "vm",             label: "Booting up your AI server",            status: "pending", detail: "", started_at: null, completed_at: null },
+        ...(hasDisk ? [{ step: "data_disk", label: "Adding storage for your models", status: "pending" as const, detail: "", started_at: null, completed_at: null }] : []),
       ]);
       setSetupSteps([
-        { step: "connect",        label: "Securely connecting to your server",   status: "pending", detail: "" },
-        { step: "update_system",  label: "Getting the system up to date",        status: "pending", detail: "" },
-        { step: "mount_disk",     label: "Preparing storage for your AI",        status: "pending", detail: "" },
-        { step: "nvidia_driver",  label: "Setting up GPU acceleration",          status: "pending", detail: "" },
-        { step: "install_ollama", label: "Installing your AI engine",            status: "pending", detail: "" },
-        { step: "pull_models",    label: `Downloading ${configForm.model}`,      status: "pending", detail: "" },
+        { step: "connect",        label: "Securely connecting to your server",   status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "update_system",  label: "Getting the system up to date",        status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "mount_disk",     label: "Preparing storage for your AI",        status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "nvidia_driver",  label: "Setting up GPU acceleration",          status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "install_ollama", label: "Installing your AI engine",            status: "pending", detail: "", started_at: null, completed_at: null },
+        { step: "pull_models",    label: `Downloading ${configForm.model}`,      status: "pending", detail: "", started_at: null, completed_at: null },
       ]);
 
       const ws = connectDeploymentWS(result.id);

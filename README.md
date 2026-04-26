@@ -174,6 +174,42 @@ docker compose up backend
 docker compose up frontend
 ```
 
+### Deploy on Railway
+
+PrivateAI is set up for a **two-service Railway deployment**:
+
+- `frontend` service
+  Uses `frontend/railway.json` and deploys the Next.js app from `/frontend`
+- `backend` service
+  Uses `backend/Dockerfile` plus `backend/railway.json` and deploys the FastAPI
+  API plus the managed local Open WebUI process from `/backend`
+
+Recommended Railway configuration:
+
+1. Create a `frontend` service with root directory `/frontend`
+2. Create a `backend` service with root directory `/backend`
+3. In Railway, point each service to its matching config file:
+   - frontend: `/frontend/railway.json`
+   - backend: `/backend/railway.json`
+4. Generate a public domain for the frontend service
+5. Generate a public domain for the backend service
+6. Add a second public domain on the backend service that targets port `8080`
+   for Open WebUI
+
+Required Railway variables:
+
+- Frontend service:
+  - `NEXT_PUBLIC_API_URL=https://<backend-domain>`
+- Backend service:
+  - `CORS_ALLOW_ORIGINS=https://<frontend-domain>`
+  - `OPEN_WEBUI_PUBLIC_URL=https://<backend-8080-domain>`
+  - `OPEN_WEBUI_DATA_DIR=/data/open-webui`
+
+Recommended backend volume mount:
+
+- Attach a Railway volume to the backend service and mount it at `/data`
+  so Open WebUI state survives redeploys.
+
 ### Run as an Electron desktop app (development)
 
 ```bash

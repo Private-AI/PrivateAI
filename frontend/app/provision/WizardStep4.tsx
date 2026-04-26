@@ -2,15 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { COLORS } from "../lib/colors";
+import type { StepProgress } from "../lib/types";
 import { ShieldIllustration, Confetti } from "../components/ui";
 import WizardShell from "./WizardShell";
-
-interface StepProgress {
-  step: string;
-  label: string;
-  status: "pending" | "in_progress" | "completed" | "failed";
-  detail: string;
-}
 
 interface Props {
   provisionSteps: StepProgress[];

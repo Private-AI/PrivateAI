@@ -36,6 +36,11 @@ HEALTH_CHECK_INTERVAL = 10
 STARTUP_TIMEOUT = 240
 
 
+def _normalize_public_url(url: str) -> str:
+    """Normalize public URLs used by the frontend for Open WebUI access."""
+    return url.rstrip("/")
+
+
 class OpenWebuiManager:
     """Singleton that owns the Open WebUI subprocess."""
 
@@ -58,6 +63,9 @@ class OpenWebuiManager:
             "OPEN_WEBUI_VENV",
             "/opt/open-webui-env",
         )
+        self._public_url = _normalize_public_url(
+            os.environ.get("OPEN_WEBUI_PUBLIC_URL", "")
+        )
 
         # Apply env overrides from docker-compose
         data_dir = os.environ.get("OPEN_WEBUI_DATA_DIR", "")
@@ -75,6 +83,12 @@ class OpenWebuiManager:
         binary = Path(self._venv_path) / "bin" / "open-webui"
         return binary.is_file()
 
+    def _external_url(self) -> str:
+        """Return the URL the frontend should use to reach Open WebUI."""
+        if self._public_url:
+            return self._public_url
+        return f"http://localhost:{self._config.port}"
+
     def get_state(self) -> OpenWebuiState:
         """Build a snapshot of the current state."""
         with self._lock:
@@ -85,7 +99,7 @@ class OpenWebuiManager:
             return OpenWebuiState(
                 status=self._status,
                 pid=self._process.pid if self._process else None,
-                url=f"http://localhost:{self._config.port}"
+                url=self._external_url()
                 if self._status == OpenWebuiStatus.RUNNING
                 else "",
                 config=self._config.model_copy(),

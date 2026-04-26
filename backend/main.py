@@ -5,6 +5,7 @@ Run with:
 """
 
 import logging
+import os
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -39,13 +40,32 @@ app = FastAPI(
 
 # ── CORS ──────────────────────────────────────────────────────────────
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=[
+def _get_cors_origins() -> list[str]:
+    origins = [
         "http://localhost:3000",  # Next.js dev server
         "http://frontend:3000",  # Docker compose
         "http://localhost:8000",  # Swagger UI
-    ],
+    ]
+
+    extra_origins = os.environ.get("CORS_ALLOW_ORIGINS", "")
+    if extra_origins:
+        origins.extend(
+            origin.strip()
+            for origin in extra_origins.split(",")
+            if origin.strip()
+        )
+
+    frontend_public_url = os.environ.get("FRONTEND_PUBLIC_URL", "").strip()
+    if frontend_public_url:
+        origins.append(frontend_public_url)
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(origins))
+
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

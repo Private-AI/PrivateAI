@@ -19,6 +19,18 @@ from main import _start_open_webui
 
 @pytest.mark.phase2
 class TestOpenWebuiReconnect:
+    def test_get_state_prefers_public_open_webui_url(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        monkeypatch.setenv("OPEN_WEBUI_PUBLIC_URL", "https://chat.example.com/")
+        manager = OpenWebuiManager()
+        manager._status = OpenWebuiStatus.RUNNING
+
+        state = manager.get_state()
+
+        assert state.url == "https://chat.example.com"
+
     def test_connect_to_deployment_restarts_running_open_webui(
         self,
         monkeypatch: pytest.MonkeyPatch,
