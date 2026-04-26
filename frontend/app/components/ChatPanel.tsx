@@ -232,7 +232,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
         transition: "width 0.3s ease", background: "rgba(255,255,255,0.015)", flexShrink: 0,
       }}>
         <div style={{ padding: "20px 16px 12px", borderBottom: `1px solid ${COLORS.border}` }}>
-          <Logo size={22} textSize={16} />
+          <Logo size={22} />
         </div>
 
         <div style={{ padding: "12px 12px 4px" }}>
