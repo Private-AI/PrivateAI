@@ -40,7 +40,7 @@ jobs:
         run: |
           docker build frontend \
             --file frontend/Dockerfile \
-            --build-arg NEXT_PUBLIC_API_URL=https://api.example.com \
+            --build-arg NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL }} \
             --tag $FRONTEND_IMAGE:$PRIMARY_TAG \
             --tag $FRONTEND_IMAGE:${{ github.sha }}
 
