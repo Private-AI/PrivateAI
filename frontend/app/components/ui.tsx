@@ -3,18 +3,26 @@
 import { useState } from "react";
 import { COLORS } from "../lib/colors";
 
-export function Logo({ size = 28, textSize = 20 }: { size?: number; textSize?: number }) {
+export function Logo({ size = 28 }: { size?: number }) {
+  const iconSize = size;
+  const textHeight = Math.round(iconSize * 0.75);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-      <svg width={size} height={size} viewBox="0 0 32 32" fill="none">
-        <rect x="6" y="13" width="20" height="15" rx="4" fill={COLORS.indigo} opacity="0.9" />
-        <rect x="10" y="13" width="12" height="15" rx="2" fill={COLORS.indigoLight} opacity="0.3" />
-        <path d="M10 13V9.5C10 6.46 12.69 4 16 4C19.31 4 22 6.46 22 9.5V13" stroke={COLORS.indigo} strokeWidth="2.5" strokeLinecap="round" />
-        <circle cx="16" cy="20.5" r="2.5" fill="white" opacity="0.9" />
-        <rect x="15" y="20.5" width="2" height="4" rx="1" fill="white" opacity="0.9" />
-        <circle cx="16" cy="20.5" r="5" stroke={COLORS.teal} strokeWidth="0.5" opacity="0.4" />
-      </svg>
-      <span style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontWeight: 700, fontSize: textSize, letterSpacing: "-0.02em" }}>
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src="/logos/logo-icon-transparent.svg"
+        width={iconSize}
+        height={iconSize}
+        alt="PrivateAI icon"
+        style={{ display: "block" }}
+      />
+      <span style={{
+        fontFamily: "var(--font-syne), Outfit, sans-serif",
+        fontWeight: 800,
+        fontSize: textHeight,
+        letterSpacing: "-0.02em",
+        lineHeight: 1,
+      }}>
         <span style={{ color: COLORS.textPrimary }}>Private</span>
         <span style={{ color: COLORS.indigo }}>AI</span>
       </span>

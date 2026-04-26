@@ -264,16 +264,17 @@ async def destroy_deployment(
         orchestrator.store.update_credentials(deployment_id, request.credentials)
 
     success = await orchestrator.destroy_deployment(deployment_id)
+    if success:
+        return LifecycleResponse(
+            success=True,
+            status="destroyed",
+            message="Resources destroyed",
+        )
     updated = orchestrator.store.get(deployment_id)
-    message = (
-        "Resources destroyed"
-        if success
-        else (updated.error if updated and updated.error else "Destroy failed")
-    )
     return LifecycleResponse(
-        success=success,
+        success=False,
         status=updated.status if updated else record.status,
-        message=message,
+        message=updated.error if updated and updated.error else "Destroy failed",
     )
 
 

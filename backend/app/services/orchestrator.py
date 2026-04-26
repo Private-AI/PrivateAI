@@ -366,30 +366,40 @@ class DeploymentOrchestrator:
 
     async def destroy_deployment(self, deployment_id: str) -> bool:
         record = self.store.get(deployment_id)
-        credentials = self._resolve_credentials(
-            deployment_id,
-            record.config.provider if record else "",
-        )
-        if not record or not credentials:
+        if not record:
             return False
 
-        provider = self._get_provider(record.config.provider)
+        credentials = self._resolve_credentials(deployment_id, record.config.provider)
+
         self.store.update_status(deployment_id, DeploymentStatus.DESTROYING)
 
-        try:
-            success = await provider.destroy(record.config, credentials)
-            if success:
-                self.store.update_status(deployment_id, DeploymentStatus.DESTROYED)
-                # Stop billing and remove from cost tracker
-                cost_monitor = get_cost_monitor()
-                cost_monitor.stop_billing(deployment_id)
-                cost_monitor.remove_deployment(deployment_id)
-            else:
-                self.store.update_status(deployment_id, DeploymentStatus.FAILED, error="Destroy failed")
-            return success
-        except Exception as e:
-            self.store.update_status(deployment_id, DeploymentStatus.FAILED, error=str(e))
-            return False
+        success = False
+        if credentials:
+            try:
+                provider = self._get_provider(record.config.provider)
+                success = await provider.destroy(record.config, credentials)
+            except Exception as e:
+                self.store.update_status(deployment_id, DeploymentStatus.FAILED, error=str(e))
+                return False
+        else:
+            # No credentials — resources were likely never created (early failure).
+            # Treat as already gone so the record can be cleaned up.
+            logger.warning(
+                "No credentials for deployment %s — removing record without cloud cleanup",
+                deployment_id,
+            )
+            success = True
+
+        if success:
+            cost_monitor = get_cost_monitor()
+            cost_monitor.stop_billing(deployment_id)
+            cost_monitor.remove_deployment(deployment_id)
+            # Delete from store so it doesn't reappear on the next list_all() poll.
+            self.store.delete(deployment_id)
+        else:
+            self.store.update_status(deployment_id, DeploymentStatus.FAILED, error="Destroy failed")
+
+        return success
 
     async def destroy_managed_resources(
         self,
@@ -406,11 +416,25 @@ class DeploymentOrchestrator:
 
         deleted_resource_groups = set(result.get("deleted_resource_groups", []))
         removed_deployment_ids: list[str] = []
+
+        dead_statuses = {
+            DeploymentStatus.FAILED,
+            DeploymentStatus.DESTROYED,
+            DeploymentStatus.DESTROYING,
+        }
+
         for record in self.store.list_all():
             if record.config.provider != provider_name:
                 continue
-            if record.config.resource_group not in deleted_resource_groups:
+
+            matched_rg = record.config.resource_group in deleted_resource_groups
+            # Also purge records that are already dead — their cloud resources
+            # are either in the deleted groups or were never fully created.
+            is_dead = record.status in dead_statuses
+
+            if not matched_rg and not is_dead:
                 continue
+
             get_cost_monitor().stop_billing(record.id)
             get_cost_monitor().remove_deployment(record.id)
             self.store.delete(record.id)

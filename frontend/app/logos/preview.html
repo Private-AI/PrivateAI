@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<style>
+  body { background: #444; font-family: sans-serif; padding: 40px; display: flex; flex-direction: column; gap: 32px; }
+  .row { display: flex; gap: 24px; align-items: center; flex-wrap: wrap; }
+  .cell { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+  .label { font-size: 11px; color: #ccc; letter-spacing: 0.08em; text-transform: uppercase; }
+  .checker { background-image: linear-gradient(45deg,#888 25%,transparent 25%),linear-gradient(-45deg,#888 25%,transparent 25%),linear-gradient(45deg,transparent 75%,#888 75%),linear-gradient(-45deg,transparent 75%,#888 75%); background-size:16px 16px; background-position:0 0,0 8px,8px -8px,-8px 0; border-radius:8px; padding:16px; }
+</style>
+</head>
+<body>
+  <div class="row">
+    <div class="cell"><div style="background:#07091a;padding:16px;border-radius:8px;"><img src="logo-icon-dark.svg"/></div><div class="label">Icon — Dark</div></div>
+    <div class="cell"><div style="background:#f4f4ff;padding:16px;border-radius:8px;"><img src="logo-icon-light.svg"/></div><div class="label">Icon — Light</div></div>
+    <div class="cell"><div class="checker"><img src="logo-icon-transparent.svg"/></div><div class="label">Icon — Transparent</div></div>
+    <div class="cell"><div style="background:#fff;padding:16px;border-radius:8px;"><img src="logo-icon-white.svg"/></div><div class="label">Icon — White BG</div></div>
+  </div>
+  <div class="row">
+    <div class="cell"><div style="background:#07091a;padding:16px;border-radius:8px;"><img src="logo-wordmark-dark.svg"/></div><div class="label">Wordmark — Dark</div></div>
+    <div class="cell"><div style="background:#f4f4ff;padding:16px;border-radius:8px;"><img src="logo-wordmark-light.svg"/></div><div class="label">Wordmark — Light</div></div>
+  </div>
+</body>
+</html>

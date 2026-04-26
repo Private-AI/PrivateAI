@@ -817,7 +817,9 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
     try {
       const live = await fetchDeployments();
-      const liveViews = live.map(deploymentToView);
+      // Filter out destroyed records — backend now deletes them, but guard against
+      // stale records from before this fix.
+      const liveViews = live.filter((d) => d.status !== "destroyed").map(deploymentToView);
       const liveIds = new Set(liveViews.map((v) => v.id));
       setDeployments([...liveViews, ...fromHistory.filter((h) => !liveIds.has(h.id))]);
       for (const v of liveViews) {
@@ -886,23 +888,37 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
 
   const handleDestroy = useCallback(async (id: string) => {
     setActionFor(id, "destroy");
+    const currentStatus = deployments.find((d) => d.id === id)?.status;
     try {
       const settings = getSettings();
       const credentials: AzureCredentials | undefined =
         settings.savedCredentials?.provider === "azure" ? settings.savedCredentials : undefined;
       const result = await destroyDeployment(id, credentials);
-      if (result.success && result.status === "destroyed") {
+      if (result.success || result.status === "destroyed") {
+        removeDeploymentFromHistory(id);
+        setDeployments((prev) => prev.filter((d) => d.id !== id));
+        return;
+      }
+      // If the deployment was already failed, the cloud resources are likely
+      // already gone — let the user force-remove it from the list.
+      if (currentStatus === "failed") {
         removeDeploymentFromHistory(id);
         setDeployments((prev) => prev.filter((d) => d.id !== id));
         return;
       }
       setDeployments((prev) => prev.map((d) => d.id === id ? { ...d, status: result.status as DeploymentStatus, error: result.message } : d));
       updateDeploymentInHistory(id, { status: result.status as DeploymentStatus });
-    } catch { /* keep current */ } finally { setActionFor(id, null); }
-  }, [setActionFor]);
+    } catch {
+      // Network error — if it was already failed just remove it locally.
+      if (currentStatus === "failed") {
+        removeDeploymentFromHistory(id);
+        setDeployments((prev) => prev.filter((d) => d.id !== id));
+      }
+    } finally { setActionFor(id, null); }
+  }, [setActionFor, deployments]);
 
   const handleDestroyAllManagedResources = useCallback(async () => {
-    if (!window.confirm("Destroy all Azure resource groups created by PrivateAI in this subscription? This only targets groups tagged as managed by PrivateAI.")) return;
+    if (!window.confirm("Destroy all Azure resource groups created by PrivateAI in this subscription? This also removes any failed or stuck deployments from the list.")) return;
     setBulkDestroyLoading(true);
     setBulkDestroyFeedback(null);
     try {
@@ -910,8 +926,23 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       const credentials: AzureCredentials | undefined =
         settings.savedCredentials?.provider === "azure" ? settings.savedCredentials : undefined;
       const result = await destroyManagedResources("azure", credentials);
+      // Remove everything the backend cleaned up.
+      const removedSet = new Set(result.removed_deployment_ids);
       for (const id of result.removed_deployment_ids) removeDeploymentFromHistory(id);
-      setDeployments((prev) => prev.filter((d) => !result.removed_deployment_ids.includes(d.id)));
+      // Also purge any failed/destroyed records still in local state — the backend
+      // cleaned those up too (dead deployments are removed in bulk destroy).
+      setDeployments((prev) => {
+        const remaining = prev.filter((d) => {
+          if (removedSet.has(d.id)) return false;
+          if (d.status === "failed" || d.status === "destroyed" || d.status === "destroying") return false;
+          return true;
+        });
+        // Sync history for anything we removed locally.
+        for (const d of prev) {
+          if (!remaining.includes(d)) removeDeploymentFromHistory(d.id);
+        }
+        return remaining;
+      });
       setBulkDestroyFeedback({ tone: result.success ? "success" : "error", message: result.message });
       await loadData();
     } catch (err) {

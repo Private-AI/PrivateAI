@@ -156,12 +156,12 @@ export default function WizardStep3({ provider, form, onChange, vmSizes, vmSizes
                   onClick={vm.available ? () => onChange({ vmSize: vm.id }) : undefined}
                   style={{ padding: 14, opacity: vm.available ? 1 : 0.5, cursor: vm.available ? "pointer" : "default" }}
                 >
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-                    <div>
-                      <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>{vm.display_name}</span>
-                      <span style={{ fontSize: 12, color: COLORS.textMuted, marginLeft: 10 }}>{vm.vcpus} vCPU · {vm.memory_gb}GB RAM{vm.gpus ? ` · ${vm.gpus}× GPU` : ""}</span>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12 }}>
+                    <div style={{ flex: 1, minWidth: 0 }}>
+                      <div style={{ fontSize: 14, fontWeight: 600, color: COLORS.textPrimary }}>{vm.display_name}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textMuted, marginTop: 2 }}>{vm.vcpus} vCPU · {vm.memory_gb}GB RAM{vm.gpus ? ` · ${vm.gpus}× GPU` : ""}</div>
                     </div>
-                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
                       {vm.cost_per_hour !== undefined && (
                         <span style={{ fontSize: 13, color: COLORS.textSecondary }}>${vm.cost_per_hour.toFixed(3)}/hr</span>
                       )}

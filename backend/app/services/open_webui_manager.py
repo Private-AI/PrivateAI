@@ -164,7 +164,7 @@ class OpenWebuiManager:
                     )
                 else:
                     self._status = OpenWebuiStatus.ERROR
-                    self._error = "Open WebUI did not become healthy within timeout"
+                    self._error = "AI Engine encountered an error"
                     logger.warning("Open WebUI startup timeout")
 
             # Push Ollama URL via API so DB reflects the tunnel URL

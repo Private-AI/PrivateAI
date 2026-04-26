@@ -11,6 +11,7 @@ import {
   IconLoader,
   IconPlay,
   IconStop,
+  IconPower,
 } from "./icons";
 import {
   fetchOpenWebuiStatus,
@@ -48,9 +49,10 @@ interface SidebarProps {
   currentPage: string;
   onNavigate: (page: string) => void;
   onCollapsedChange?: (collapsed: boolean) => void;
+  onLogout?: () => void;
 }
 
-export default function Sidebar({ currentPage, onNavigate, onCollapsedChange }: SidebarProps) {
+export default function Sidebar({ currentPage, onNavigate, onCollapsedChange, onLogout }: SidebarProps) {
   const [collapsed, setCollapsed] = useState(false);
   const [mounted, setMounted] = useState(false);
   const [hoveredItem, setHoveredItem] = useState<string | null>(null);
@@ -87,30 +89,23 @@ export default function Sidebar({ currentPage, onNavigate, onCollapsedChange }: 
       <div style={{
         height: 60, flexShrink: 0,
         display: "flex", alignItems: "center",
-        padding: isCollapsed ? "0 16px" : "0 18px",
+        padding: isCollapsed ? "0 14px" : "0 16px",
         borderBottom: `1px solid ${COLORS.border}`,
       }}>
-        <div style={{
-          width: 32, height: 32, borderRadius: 9, flexShrink: 0,
-          background: "rgba(99,102,241,0.12)", border: "1px solid rgba(99,102,241,0.25)",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
-            <path d="M8 2L13 4v4c0 3-2.5 5-5 6-2.5-1-5-3-5-6V4l5-2z"
-              stroke={COLORS.indigoLight} strokeWidth="1.3"
-              fill={`rgba(99,102,241,0.18)`} />
-            <path d="M6 8l1.5 1.5L10 6.5"
-              stroke={COLORS.indigoLight} strokeWidth="1.4"
-              strokeLinecap="round" strokeLinejoin="round" />
-          </svg>
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img
+          src="/logos/logo-icon-transparent.svg"
+          width={32} height={32}
+          alt="PrivateAI"
+          style={{ display: "block", flexShrink: 0 }}
+        />
         {!isCollapsed && (
           <span style={{
-            marginLeft: 10, fontFamily: "var(--font-syne), Syne, sans-serif",
-            fontSize: 15, fontWeight: 700, color: COLORS.textPrimary,
+            marginLeft: 8, fontFamily: "var(--font-syne), Outfit, sans-serif",
+            fontSize: 15, fontWeight: 800, color: COLORS.textPrimary,
             letterSpacing: "-0.02em", whiteSpace: "nowrap",
           }}>
-            PrivateAI
+            Private<span style={{ color: COLORS.indigo }}>AI</span>
           </span>
         )}
       </div>
@@ -167,6 +162,28 @@ export default function Sidebar({ currentPage, onNavigate, onCollapsedChange }: 
 
       {/* AI engine status */}
       <SidebarWebUI collapsed={isCollapsed} />
+
+      {/* Logout */}
+      {onLogout && (
+        <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: "6px 8px", flexShrink: 0 }}>
+          <button
+            type="button"
+            title="Sign out"
+            onClick={onLogout}
+            style={{
+              width: "100%", display: "flex", alignItems: "center",
+              justifyContent: isCollapsed ? "center" : "flex-start",
+              gap: 10, padding: isCollapsed ? "10px 0" : "10px 12px",
+              background: "none", border: "none", cursor: "pointer",
+              borderRadius: 10, color: COLORS.textMuted,
+              fontSize: 13, fontWeight: 500, fontFamily: "inherit",
+            }}
+          >
+            <IconPower size={16} style={{ color: COLORS.textMuted, flexShrink: 0 }} />
+            {!isCollapsed && <span>Sign out</span>}
+          </button>
+        </div>
+      )}
 
       {/* Collapse toggle */}
       <div style={{ borderTop: `1px solid ${COLORS.border}`, padding: 8, flexShrink: 0 }}>
@@ -327,7 +344,7 @@ function SidebarWebUI({ collapsed }: { collapsed: boolean }) {
           fontSize: 10, color: "#f87171", margin: 0, paddingLeft: 21,
           overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap",
         }}>
-          {state.error}
+          AI Engine encountered an error
         </p>
       )}
       {state.status === "not_installed" && (

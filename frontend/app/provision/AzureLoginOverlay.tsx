@@ -60,8 +60,10 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
 
   const autoStart = (verificationUrl: string, userCode: string) => {
     navigator.clipboard.writeText(userCode).catch(() => {});
-    window.open(verificationUrl, "_blank");
     setAutoReady(true);
+    setTimeout(() => {
+      window.open(verificationUrl, "_blank");
+    }, 2000);
   };
 
   // Start login on mount
