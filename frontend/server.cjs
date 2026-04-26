@@ -9,7 +9,7 @@ const port = Number(process.env.PORT || 3000);
 const backendHost = process.env.BACKEND_HOST || "127.0.0.1";
 const backendPort = Number(process.env.BACKEND_PORT || 8000);
 const openWebuiHost = process.env.OPEN_WEBUI_HOST || "127.0.0.1";
-const openWebuiPort = Number(process.env.OPEN_WEBUI_PORT || 8080);
+const openWebuiPort = Number(process.env.OPEN_WEBUI_PORT || 3737);
 
 const app = next({ dev, hostname, port });
 const handle = app.getRequestHandler();

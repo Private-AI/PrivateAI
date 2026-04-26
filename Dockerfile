@@ -8,7 +8,7 @@ ENV PYTHONUNBUFFERED=1 \
     BACKEND_PORT=8000 \
     OPEN_WEBUI_VENV=/opt/open-webui-env \
     OPEN_WEBUI_DATA_DIR=/app/open-webui-data \
-    OPEN_WEBUI_PORT=8080 \
+    OPEN_WEBUI_PORT=3737 \
     PUBLIC_OPEN_WEBUI_URL=/open-webui
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
