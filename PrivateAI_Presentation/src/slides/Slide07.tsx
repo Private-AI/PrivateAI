@@ -37,7 +37,7 @@ export default function Slide07() {
             </div>
             <div style={{ fontSize: 13, color: 'var(--text3)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>02</div>
             <div style={{ fontFamily: 'Outfit, sans-serif', fontSize: 28, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>Connect in one click</div>
-            <div style={{ fontSize: 18, color: 'var(--text2)', lineHeight: 1.6 }}>Enter credentials or sign in via OAuth. We handle provisioning, firewall, GPU drivers, model install — everything.</div>
+            <div style={{ fontSize: 18, color: 'var(--text2)', lineHeight: 1.6 }}>Enter credentials or sign in via OAuth. We handle provisioning, firewall, GPU drivers, model install - everything.</div>
           </div>
 
           <div className="alive-card accent-lav float-delay-3" style={{ borderRadius: 20, padding: 24, background: 'rgba(255,255,255,0.025)' }}>
@@ -60,7 +60,7 @@ export default function Slide07() {
             </div>
             <div style={{ fontSize: 13, color: 'var(--text3)', fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 10 }}>04</div>
             <div style={{ fontFamily: 'Outfit, sans-serif', fontSize: 28, fontWeight: 700, color: 'var(--text)', marginBottom: 14 }}>Connect &amp; Chat</div>
-            <div style={{ fontSize: 18, color: 'var(--text2)', lineHeight: 1.6 }}>Open WebUI launches directly in the app — talking to your server. Your prompts never touch our infrastructure.</div>
+            <div style={{ fontSize: 18, color: 'var(--text2)', lineHeight: 1.6 }}>Open WebUI launches directly in the app, talking to your server. Your prompts never touch our infrastructure.</div>
           </div>
         </div>
       </div>

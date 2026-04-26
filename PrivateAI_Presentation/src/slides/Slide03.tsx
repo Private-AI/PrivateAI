@@ -1,4 +1,4 @@
-import { GlowBlob, PresenterCam, SectionTag, SlideNum } from '../components'
+import { GlowBlob, SectionTag, SlideNum } from '../components'
 
 export default function Slide03() {
   return (
@@ -27,7 +27,7 @@ export default function Slide03() {
           <div className="alive-card accent-red float-delay-2" style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)', borderRadius: 20, padding: 36 }}>
             <div className="alive-icon accent-red" style={{ fontSize: 44, marginBottom: 20 }}>🏥</div>
             <div style={{ fontFamily: 'Outfit, sans-serif', fontSize: 26, fontWeight: 700, color: 'var(--text)', marginBottom: 12 }}>Dealbreaker for professionals</div>
-            <div style={{ fontSize: 18, color: 'var(--text2)', lineHeight: 1.6 }}>Doctors, lawyers, journalists, engineers with trade secrets — they can't risk using public AI at all.</div>
+            <div style={{ fontSize: 18, color: 'var(--text2)', lineHeight: 1.6 }}>Doctors, lawyers, journalists, engineers with trade secrets - they can't risk using public AI at all.</div>
           </div>
           <div className="alive-card accent-red float-delay-3" style={{ background: 'rgba(248,113,113,0.06)', border: '1px solid rgba(248,113,113,0.15)', borderRadius: 20, padding: 36 }}>
             <div className="alive-icon accent-red" style={{ fontSize: 44, marginBottom: 20 }}>📰</div>
@@ -37,7 +37,6 @@ export default function Slide03() {
         </div>
       </div>
 
-      <PresenterCam width={220} height={220} style={{ position: 'absolute', bottom: 60, right: 80 }} label="You" />
       <SlideNum n={3} />
     </div>
   )

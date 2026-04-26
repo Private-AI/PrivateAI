@@ -28,7 +28,7 @@ export default function Slide04() {
 
           <div className="alive-card accent-red" style={{ padding: '28px 32px', background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.2)', borderRadius: 16, maxWidth: 700 }}>
             <div style={{ fontSize: 32, fontFamily: 'Outfit, sans-serif', fontWeight: 700, color: '#fca5a5', marginBottom: 8 }}>So teams are stuck.</div>
-            <div style={{ fontSize: 20, color: 'var(--text2)' }}>Give up your privacy <span style={{ color: 'var(--text3)' }}>—or—</span> give up on AI entirely.</div>
+            <div style={{ fontSize: 20, color: 'var(--text2)' }}>Give up your privacy, or give up on AI entirely.</div>
           </div>
         </div>
 

@@ -19,14 +19,14 @@ export default function Slide05() {
           letterSpacing: '-0.04em', lineHeight: 0.95, marginBottom: 48,
         }}>
           <span className="grad-text">Anyone</span> should be able<br />
-          to use AI — <span style={{ color: 'var(--text)' }}>privately.</span>
+          to use AI, <span style={{ color: 'var(--text)' }}>privately.</span>
         </h2>
 
         <Sep style={{ margin: '0 auto 48px' }} />
 
         <p className="reveal-up delay-2" style={{ fontSize: 28, color: 'var(--text2)', lineHeight: 1.6, maxWidth: 900, marginBottom: 56 }}>
           Not just developers. Not just enterprises with IT teams.<br />
-          <strong style={{ color: 'var(--text)' }}>Every professional, every small business, every individual</strong> — without needing a computer science degree or a six-figure cloud budget.
+          <strong style={{ color: 'var(--text)' }}>Every professional, every small business, every individual</strong> - without needing a computer science degree or a six-figure cloud budget.
         </p>
 
         <div className="reveal-up delay-3" style={{ display: 'flex', gap: 24, justifyContent: 'center', flexWrap: 'wrap' }}>

@@ -1,4 +1,3 @@
-import { useState } from 'react'
 
 // ── GlowBlob ─────────────────────────────────────────────────────────────────
 interface GlowBlobProps {
@@ -83,34 +82,54 @@ interface PresenterCamProps {
   width?: number
   height?: number
   style?: React.CSSProperties
+  videoStyle?: React.CSSProperties
   label?: string
   sublabel?: string
-  /** Local video path served from /public. Replace with your own presenter video when ready. */
   videoSrc?: string
+  muted?: boolean
+  loop?: boolean
+  logoPattern?: boolean
+  onEnded?: () => void
 }
 export function PresenterCam({
   width = 220,
   height = 220,
   style,
+  videoStyle,
   label = 'Presenter\nbackground removed',
   sublabel,
   videoSrc = '/videos/placeholder_video_sample.webm',
+  muted = true,
+  loop = true,
+  logoPattern = false,
+  onEnded,
 }: PresenterCamProps) {
   return (
     <div
       className="presenter-cam accent-indigo"
       style={{ width, height, ...style }}
     >
+      {logoPattern && (
+        <div style={{
+          position: 'absolute', inset: 0, borderRadius: 'inherit',
+          backgroundImage: "url('/logos/logo-icon-transparent.svg')",
+          backgroundRepeat: 'repeat', backgroundSize: '72px',
+          opacity: 0.22, pointerEvents: 'none',
+          animation: 'logoDrift 8s linear infinite',
+        }} />
+      )}
       {videoSrc && (
         <video
           className="presenter-video"
           autoPlay
-          muted
-          loop
+          muted={muted}
+          loop={loop}
           preload="auto"
           playsInline
-          aria-hidden="true"
+          style={videoStyle}
+          onEnded={onEnded}
         >
+          <source src={videoSrc} type="video/mp4" />
           <source src={videoSrc} type="video/webm" />
         </video>
       )}
@@ -161,12 +180,8 @@ export function CheckItem({ children, color = 'var(--indigo)' }: CheckItemProps)
 // ── DemoVideo ─────────────────────────────────────────────────────────────────
 interface DemoVideoProps {
   label: string
-  hint: string
-  footer?: string
-  /** Local video path served from /public. Replace per slide with your own recording when ready. */
+  hint?: string
   videoSrc?: string
-  /** YouTube video ID — replace with real recording when ready */
-  videoId?: string
   playColor?: string
   labelColor?: string
   playBtnStyle?: React.CSSProperties
@@ -174,102 +189,25 @@ interface DemoVideoProps {
 }
 export function DemoVideo({
   label,
-  hint,
-  footer,
   videoSrc = '/videos/placeholder_video_sample.webm',
-  videoId = 'dQw4w9WgXcQ',
-  playColor = '#818cf8',
-  labelColor,
-  playBtnStyle,
   style,
 }: DemoVideoProps) {
-  const [playing, setPlaying] = useState(false)
-  const accentClass = playColor === '#2dd4bf'
-    ? 'accent-teal'
-    : playColor === '#a78bfa'
-      ? 'accent-lav'
-      : 'accent-indigo'
-
-  if (playing) {
-    return (
-      <div
-        className="demo-video"
-        style={{ ...style, border: 'none', background: '#000', cursor: 'default', padding: 0 }}
-      >
-        {videoSrc ? (
-          <video
-            style={{ width: '100%', height: '100%', border: 'none', borderRadius: 20, objectFit: 'cover' }}
-            autoPlay
-            controls
-            preload="auto"
-            playsInline
-            onEnded={() => window.dispatchEvent(new Event('privateai-demo-video-ended'))}
-            title={label}
-          >
-            <source src={videoSrc} type="video/webm" />
-          </video>
-        ) : (
-          <iframe
-            style={{ width: '100%', height: '100%', border: 'none', borderRadius: 20 }}
-            src={`https://www.youtube.com/embed/${videoId}?autoplay=1&rel=0`}
-            allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-            allowFullScreen
-            title={label}
-          />
-        )}
-        <button
-          onClick={(e) => { e.stopPropagation(); setPlaying(false) }}
-          style={{
-            position: 'absolute', top: 12, right: 12, zIndex: 10,
-            background: 'rgba(0,0,0,0.7)', border: '1px solid rgba(255,255,255,0.2)',
-            color: 'white', cursor: 'pointer', borderRadius: 6,
-            padding: '4px 10px', fontSize: 12, fontFamily: 'Outfit, sans-serif',
-          }}
-        >
-          ✕
-        </button>
-      </div>
-    )
-  }
-
   return (
-    <div className={`demo-video alive-card scan-line ${accentClass}`} style={style} onClick={() => setPlaying(true)}>
-      {videoSrc && (
-        <video
-          className="demo-video-preview"
-          autoPlay
-          muted
-          loop
-          preload="auto"
-          playsInline
-          aria-hidden="true"
-        >
-          <source src={videoSrc} type="video/webm" />
-        </video>
-      )}
-      <div className="demo-video-overlay" />
-      <div
-        className="play-btn"
-        style={{ borderColor: playColor, ...playBtnStyle }}
+    <div
+      className="demo-video"
+      style={{ ...style, border: 'none', background: '#000', cursor: 'default', padding: 0 }}
+    >
+      <video
+        style={{ width: '100%', height: '100%', border: 'none', borderRadius: 20, objectFit: 'cover' }}
+        autoPlay
+        preload="auto"
+        playsInline
+        onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+        title={label}
       >
-        <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
-          <polygon points="10,7 22,14 10,21" fill={playColor} />
-        </svg>
-      </div>
-      <div className="demo-video-copy">
-        <div className="video-label" style={labelColor ? { color: labelColor } : undefined}>
-          {label}
-        </div>
-        <div className="video-hint">{hint}</div>
-      </div>
-      {footer && (
-        <div style={{
-          position: 'absolute', bottom: 24, left: 0, right: 0,
-          textAlign: 'center', fontSize: 13, color: 'var(--text3)', zIndex: 3,
-        }}>
-          {footer}
-        </div>
-      )}
+        <source src={videoSrc} type="video/webm" />
+        <source src={videoSrc.replace('.webm', '.mp4')} type="video/mp4" />
+      </video>
     </div>
   )
 }
