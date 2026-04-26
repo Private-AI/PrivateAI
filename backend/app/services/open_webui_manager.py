@@ -147,7 +147,7 @@ class OpenWebuiManager:
 
         try:
             proc = subprocess.Popen(
-                [binary, "serve"],
+                [binary, "serve", "--port", str(self._config.port)],
                 env=env,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
