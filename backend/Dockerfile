@@ -5,7 +5,7 @@ WORKDIR /app
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     OPEN_WEBUI_VENV=/opt/open-webui-env \
-    OPEN_WEBUI_PORT=8080 \
+    OPEN_WEBUI_PORT=8081 \
     OPEN_WEBUI_DATA_DIR=/data/open-webui
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
