@@ -38,7 +38,18 @@ export default function Slide12() {
         </div>
       </div>
 
-      <PresenterCam width={220} height={220} style={{ position: 'absolute', bottom: 60, right: 80 }} label="You" />
+      <PresenterCam
+        width={280}
+        height={280}
+        style={{ position: 'absolute', bottom: 60, right: 80 }}
+        videoSrc="/videos/slide12.mp4"
+        videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+        muted={false}
+        loop={false}
+        logoPattern
+        onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+      />
+
       <SlideNum n={12} />
     </div>
   )

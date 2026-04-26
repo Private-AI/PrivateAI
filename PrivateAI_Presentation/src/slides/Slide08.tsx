@@ -12,14 +12,24 @@ export default function Slide08() {
           <div className="alive-card alive-icon accent-lav" style={{
             width: 220, height: 220, borderRadius: '50%',
             background: 'rgba(167,139,250,0.1)',
-            border: '3px dashed rgba(167,139,250,0.4)',
-            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 8,
+            border: '3px solid rgba(167,139,250,0.4)',
+            display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
+            overflow: 'hidden',
           }}>
-            <div style={{ fontSize: 72 }}>👩‍⚕️</div>
+            <img
+              src="/sarah.jpeg"
+              alt="Sarah"
+              style={{ width: '100%', height: '100%', objectFit: 'cover', borderRadius: '50%' }}
+              onError={(e) => {
+                (e.target as HTMLImageElement).style.display = 'none'
+                const parent = (e.target as HTMLImageElement).parentElement
+                if (parent) parent.innerHTML = '<div style="font-size:72px">👩‍⚕️</div>'
+              }}
+            />
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ fontFamily: 'Outfit, sans-serif', fontSize: 36, fontWeight: 800, color: 'var(--text)', marginBottom: 6 }}>Sarah</div>
-            <div style={{ fontSize: 18, color: 'var(--lavender)', fontWeight: 600 }}>Registered Nurse · Western Sydney</div>
+            <div style={{ fontSize: 18, color: 'var(--lavender)', fontWeight: 600 }}>Registered Nurse, Western Sydney</div>
           </div>
           <div className="alive-card accent-red" style={{
             background: 'rgba(248,113,113,0.08)', border: '1px solid rgba(248,113,113,0.25)',
@@ -55,7 +65,7 @@ export default function Slide08() {
               <div className="alive-icon accent-red" style={{ fontSize: 28, flexShrink: 0 }}>😰</div>
               <div>
                 <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text)', marginBottom: 4 }}>The problem</div>
-                <div style={{ fontSize: 16, color: 'var(--text2)', lineHeight: 1.5 }}>Sarah spends 2 hours a day on admin — summarising patient notes, drafting referrals, researching drug interactions. She knows AI could halve that. But every tool she tries uploads data to American servers. Her hospital's compliance team shuts it down immediately.</div>
+                <div style={{ fontSize: 16, color: 'var(--text2)', lineHeight: 1.5 }}>Sarah spends 2 hours a day on admin. She knows AI could halve that. But every tool uploads data to external servers. Compliance shuts it down every time.</div>
               </div>
             </div>
             <div className="alive-card accent-teal float-delay-2" style={{
@@ -66,7 +76,7 @@ export default function Slide08() {
               <div className="alive-icon accent-teal" style={{ fontSize: 28, flexShrink: 0 }}>✅</div>
               <div>
                 <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--teal)', marginBottom: 4 }}>With PrivateAI</div>
-                <div style={{ fontSize: 16, color: 'var(--text2)', lineHeight: 1.5 }}>Sarah deploys her own private AI in 5 minutes on her hospital's Azure subscription. Patient data never leaves the network. Compliance is satisfied. Sarah gets her 2 hours back — every day.</div>
+                <div style={{ fontSize: 16, color: 'var(--text2)', lineHeight: 1.5 }}>Sarah deploys on the hospital's own Azure in 5 minutes. Patient data never leaves the network. Compliance is satisfied. Sarah gets her 2 hours back.</div>
               </div>
             </div>
           </div>

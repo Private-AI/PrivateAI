@@ -24,7 +24,16 @@ export default function Slide02() {
         </div>
 
         <div className="reveal-right delay-3" style={{ flexShrink: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 16 }}>
-          <PresenterCam width={360} height={360} label="Presenter" sublabel="background removed" />
+          <PresenterCam
+            width={360}
+            height={360}
+            videoSrc="/videos/slide2.mp4"
+            videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+            muted={false}
+            loop={false}
+            logoPattern
+            onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+          />
         </div>
       </div>
 
