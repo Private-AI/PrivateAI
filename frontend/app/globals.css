@@ -447,8 +447,8 @@ textarea.input {
   to   { transform: translateY(600px)  rotate(720deg); opacity: 0; }
 }
 @keyframes deploy-glow {
-  0%, 100% { box-shadow: 0 0 20px rgba(45,212,191,0.3); }
-  50%       { box-shadow: 0 0 40px rgba(45,212,191,0.6); }
+  0%, 100% { filter: drop-shadow(0 0 10px rgba(45,212,191,0.4)); }
+  50%       { filter: drop-shadow(0 0 22px rgba(45,212,191,0.75)); }
 }
 
 /* =========================================================================

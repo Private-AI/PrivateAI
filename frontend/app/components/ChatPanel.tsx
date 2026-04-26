@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback } from "react";
 import { COLORS } from "../lib/colors";
-import { Logo, ShieldIllustration } from "./ui";
+import { Logo } from "./ui";
 import {
   fetchModels,
   sendChatMessage,
@@ -364,7 +364,8 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
                 </div>
               )}
               <div style={{ marginBottom: 24, animation: "pulse-core 3s infinite" }}>
-                <ShieldIllustration size={80} />
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img src="/logos/logo-icon-transparent.svg" width={80} height={80} alt="PrivateAI" style={{ display: "block" }} />
               </div>
               <h2 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: 28, fontWeight: 700, color: COLORS.textPrimary, margin: "0 0 10px", letterSpacing: "-0.02em" }}>
                 {models.length === 0 && !connectionError ? "Connecting to your model..." : "What’s on your mind?"}

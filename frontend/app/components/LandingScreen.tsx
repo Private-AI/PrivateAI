@@ -2,9 +2,9 @@
 
 import { useState, useEffect } from "react";
 import { COLORS } from "../lib/colors";
-import { Logo, ShieldIllustration, AzureLogo, AWSLogo, GCPLogo, Pill, Card, PrimaryButton, GhostButton } from "./ui";
+import { Logo, AzureLogo, AWSLogo, GCPLogo, Pill, Card, PrimaryButton, GhostButton } from "./ui";
 
-export default function LandingScreen({ onGetStarted }: { onGetStarted: () => void }) {
+export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted: () => void; onSignIn?: () => void }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
 
@@ -23,7 +23,7 @@ export default function LandingScreen({ onGetStarted }: { onGetStarted: () => vo
       <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 64px", position: "relative", zIndex: 10, ...fade(0) }}>
         <Logo />
         <div style={{ display: "flex", gap: 8 }}>
-          <GhostButton onClick={onGetStarted} style={{ padding: "9px 20px", fontSize: 13 }}>Sign in</GhostButton>
+          <GhostButton onClick={onSignIn ?? onGetStarted} style={{ padding: "9px 20px", fontSize: 13 }}>Sign in</GhostButton>
           <PrimaryButton onClick={onGetStarted} style={{ padding: "9px 20px", fontSize: 13 }}>Get started</PrimaryButton>
         </div>
       </nav>
@@ -55,7 +55,8 @@ export default function LandingScreen({ onGetStarted }: { onGetStarted: () => vo
           </div>
 
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", animation: "pulse-core 3s ease-in-out infinite" }}>
-            <ShieldIllustration size={140} />
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logos/logo-icon-transparent.svg" width={140} height={140} alt="PrivateAI" style={{ display: "block" }} />
           </div>
         </div>
 

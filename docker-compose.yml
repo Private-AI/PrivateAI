@@ -8,8 +8,8 @@ services:
       - /app/backend/__pycache__
     working_dir: /app/backend
     ports:
-      - "8000:8000"
-      - "8080:8080"
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8080:8080"
     environment:
       - PYTHONPATH=/app/backend
       - PYTHONUNBUFFERED=1
@@ -31,7 +31,7 @@ services:
       - /app/frontend/node_modules
     working_dir: /app/frontend
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://backend:8000
       - CHOKIDAR_USEPOLLING=true
@@ -75,9 +75,9 @@ services:
       - /app/frontend/node_modules
     working_dir: /app
     ports:
-      - "3000:3000"
-      - "8000:8000"
-      - "8080:8080"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8080:8080"
     environment:
       - PYTHONPATH=/app/backend
       - NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -110,10 +110,10 @@ services:
       - /app/frontend/node_modules
     working_dir: /app
     ports:
-      - "3000:3000"
-      - "8000:8000"
-      - "8080:8080"
-      - "9229:9229"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:9229:9229"
     environment:
       - PYTHONPATH=/app/backend
       - NEXT_PUBLIC_API_URL=http://localhost:8000
@@ -144,9 +144,9 @@ services:
       - /app/frontend/node_modules
     working_dir: /app
     ports:
-      - "3000:3000"
-      - "8000:8000"
-      - "8080:8080"
+      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:8080:8080"
     environment:
       - PYTHONPATH=/app/backend
       - PYTHONUNBUFFERED=1

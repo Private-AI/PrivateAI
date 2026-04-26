@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { COLORS } from "../lib/colors";
-import { ShieldIllustration, Confetti } from "../components/ui";
+import { Confetti } from "../components/ui";
 import WizardShell from "./WizardShell";
 
 interface StepProgress {
@@ -83,9 +83,8 @@ export default function WizardStep4({ provisionSteps, setupSteps, error, isCompl
             </defs>
           </svg>
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center" }}>
-            <div style={{ animation: "deploy-glow 2s ease-in-out infinite" }}>
-              <ShieldIllustration size={90} />
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/logos/logo-icon-transparent.svg" width={90} height={90} alt="PrivateAI" style={{ display: "block", animation: "deploy-glow 2s ease-in-out infinite" }} />
           </div>
         </div>
 
