@@ -61,7 +61,7 @@ export interface DeploymentConfig {
 export interface StepProgress {
   step: string;
   label: string;
-  status: string;
+  status: "pending" | "in_progress" | "completed" | "failed";
   detail: string;
   started_at: string | null;
   completed_at: string | null;
