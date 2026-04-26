@@ -16,7 +16,6 @@ const handle = app.getRequestHandler();
 
 function shouldProxyToBackend(pathname) {
   return (
-    pathname === "/health" ||
     pathname === "/docs" ||
     pathname === "/openapi.json" ||
     pathname.startsWith("/api/")
@@ -96,42 +95,70 @@ function proxyUpgrade(req, socket, head, targetHost, targetPort, targetPath) {
   });
 }
 
-app.prepare().then(() => {
-  const server = http.createServer((req, res) => {
-    const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-    const { pathname, search } = requestUrl;
+// Track Next.js readiness
+let nextReady = false;
+let nextError = null;
 
-    if (shouldProxyToBackend(pathname)) {
-      proxyHttp(req, res, backendHost, backendPort, `${pathname}${search}`);
-      return;
-    }
+// Start HTTP server immediately — before app.prepare() — so Railway
+// can health-check the process as soon as it binds to the port.
+const server = http.createServer((req, res) => {
+  const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  const { pathname, search } = requestUrl;
 
-    if (shouldProxyToOpenWebUi(pathname)) {
-      const targetPath = `${stripOpenWebUiPrefix(pathname)}${search}`;
-      proxyHttp(req, res, openWebuiHost, openWebuiPort, targetPath);
-      return;
-    }
+  // Health check responds immediately with no dependency on Next.js or backend
+  if (pathname === "/health") {
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({ status: "ok" }));
+    return;
+  }
 
-    handle(req, res, requestUrl);
-  });
+  if (shouldProxyToBackend(pathname)) {
+    proxyHttp(req, res, backendHost, backendPort, `${pathname}${search}`);
+    return;
+  }
 
-  server.on("upgrade", (req, socket, head) => {
-    const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
-    const pathname = requestUrl.pathname;
-    const search = requestUrl.search;
+  if (shouldProxyToOpenWebUi(pathname)) {
+    const targetPath = `${stripOpenWebUiPrefix(pathname)}${search}`;
+    proxyHttp(req, res, openWebuiHost, openWebuiPort, targetPath);
+    return;
+  }
 
-    if (
-      pathname.startsWith("/api/v1/deployments/") &&
-      (pathname.endsWith("/ws") || pathname.endsWith("/terminal"))
-    ) {
-      proxyUpgrade(req, socket, head, backendHost, backendPort, `${pathname}${search}`);
-      return;
-    }
+  if (!nextReady) {
+    res.writeHead(503, { "Content-Type": "text/plain" });
+    res.end(nextError ? `Startup error: ${nextError.message}` : "Starting up\u2026");
+    return;
+  }
 
-    socket.destroy();
-  });
-
-  server.listen(port, hostname, () => {
-    console.log(`> Frontend proxy listening on http://${hostname}:${port}`);
-  });
+  handle(req, res, requestUrl);
 });
+
+server.on("upgrade", (req, socket, head) => {
+  const requestUrl = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
+  const pathname = requestUrl.pathname;
+  const search = requestUrl.search;
+
+  if (
+    pathname.startsWith("/api/v1/deployments/") &&
+    (pathname.endsWith("/ws") || pathname.endsWith("/terminal"))
+  ) {
+    proxyUpgrade(req, socket, head, backendHost, backendPort, `${pathname}${search}`);
+    return;
+  }
+
+  socket.destroy();
+});
+
+server.listen(port, hostname, () => {
+  console.log(`> Frontend proxy listening on http://${hostname}:${port}`);
+});
+
+// Prepare Next.js in the background; errors are now surfaced in logs
+app.prepare()
+  .then(() => {
+    nextReady = true;
+    console.log("> Next.js ready");
+  })
+  .catch((err) => {
+    nextError = err;
+    console.error("Next.js failed to prepare:", err);
+  });
