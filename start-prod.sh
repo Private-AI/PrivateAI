@@ -17,18 +17,17 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+# Start backend — failure here does not kill the container.
+# If uvicorn crashes, API calls return 502 but the health check
+# (handled locally by server.cjs) keeps passing.
 cd /app/backend
 uvicorn main:app --host "${BACKEND_HOST}" --port "${BACKEND_PORT}" &
 backend_pid=$!
 
+# Frontend is the primary process — Railway health-checks it.
 cd /app/frontend
 node server.cjs &
 frontend_pid=$!
 
-set +e
-wait -n "${backend_pid}" "${frontend_pid}"
-exit_code=$?
-set -e
-
-cleanup
-exit "${exit_code}"
+# Only exit when the frontend exits. Backend failure is survivable.
+wait "${frontend_pid}"
