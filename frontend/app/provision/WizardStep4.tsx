@@ -4,13 +4,7 @@ import { useState, useEffect } from "react";
 import { COLORS } from "../lib/colors";
 import { ShieldIllustration, Confetti } from "../components/ui";
 import WizardShell from "./WizardShell";
-
-interface StepProgress {
-  step: string;
-  label: string;
-  status: "pending" | "in_progress" | "completed" | "failed";
-  detail: string;
-}
+import { StepProgress } from "../lib/types";
 
 interface Props {
   provisionSteps: StepProgress[];
