@@ -245,7 +245,18 @@ class OpenWebuiManager:
         the VM so Ollama traffic is encrypted and port 11434 stays closed
         in the NSG.  Open WebUI then points at the local tunnel endpoint
         (http://127.0.0.1:{port}) instead of the VM's public IP.
+
+        In test mode the SSH tunnel is skipped — the connection is recorded
+        but no real Open WebUI process is started.
         """
+        from app.providers.registry import is_test_mode
+
+        if is_test_mode():
+            with self._lock:
+                self._connected_deployment_id = deployment_id
+                self._connected_deployment_name = deployment_name
+            return self.get_state()
+
         from app.services.ssh_tunnel import get_tunnel_manager
 
         # The deployment flow relies on the SSH tunnel; do not silently

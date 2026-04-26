@@ -28,6 +28,7 @@ All sessions are isolated — each gets its own AZURE_CONFIG_DIR under
 from __future__ import annotations
 
 import logging
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 
 import anyio
@@ -42,6 +43,7 @@ from app.models.schemas import (
     AzureCliProvisionResponse,
     ErrorResponse,
 )
+from app.providers.registry import is_test_mode
 from app.services.azure_cli_auth import (
     AuthStatus,
     get_cli_auth_manager,
@@ -55,6 +57,9 @@ router = APIRouter(prefix="/api/v1/azure/cli", tags=["azure-cli-auth"])
 
 # Small pool for the few blocking az calls we still need to make
 _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="azure-cli")
+
+# Active mock session ids (test mode only)
+_mock_sessions: set[str] = set()
 
 
 def _require_az() -> None:
@@ -80,6 +85,18 @@ async def start_device_code_login() -> AzureCliLoginStartResponse:
     frontend should display the returned ``verification_url`` and
     ``user_code`` and then poll ``/login/status`` until authenticated.
     """
+    if is_test_mode():
+        session_id = str(uuid.uuid4())
+        _mock_sessions.add(session_id)
+        return AzureCliLoginStartResponse(
+            session_id=session_id,
+            verification_url="https://microsoft.com/devicelogin",
+            user_code="TESTX1234",
+            message=(
+                "Test mode: open https://microsoft.com/devicelogin "
+                "and enter code TESTX1234 (this is simulated — no real login occurs)"
+            ),
+        )
     _require_az()
     manager = get_cli_auth_manager()
     session = manager.create_session()
@@ -119,6 +136,17 @@ async def get_login_status(
       - ``failed``        — login failed or was cancelled
       - ``expired``       — session was garbage-collected
     """
+    if is_test_mode():
+        if session_id not in _mock_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        return AzureCliLoginStatusResponse(
+            session_id=session_id,
+            status="authenticated",
+            subscription_id="mock-subscription-id",
+            subscription_name="Mock Azure Subscription (Test Mode)",
+            tenant_id="mock-tenant-id",
+            user_name="testuser@example.com",
+        )
     _require_az()
     manager = get_cli_auth_manager()
     try:
@@ -159,6 +187,25 @@ async def provision_service_principal(
     active provider credentials so subsequent provisioning calls work
     without the frontend having to re-send them.
     """
+    if is_test_mode():
+        if request.session_id not in _mock_sessions:
+            raise HTTPException(status_code=404, detail="Session not found")
+        mock_creds = AzureCredentials(
+            subscription_id="mock-subscription-id",
+            tenant_id="mock-tenant-id",
+            client_id="mock-client-id",
+            client_secret="mock-client-secret",
+        )
+        get_store().set_provider_credentials("azure", mock_creds)
+        return AzureCliProvisionResponse(
+            session_id=request.session_id,
+            status=AuthStatus.PROVISIONED,
+            client_id="mock-client-id",
+            client_secret="mock-client-secret",
+            tenant_id="mock-tenant-id",
+            subscription_id="mock-subscription-id",
+            display_name=request.name,
+        )
     _require_az()
     manager = get_cli_auth_manager()
     try:
@@ -226,6 +273,13 @@ async def cancel_login(
     session_id: str = Query(..., description="Session id returned by /login/start"),
 ) -> AzureCliCancelResponse:
     """Abort an in-flight device-code login and clean up its resources."""
+    if is_test_mode():
+        _mock_sessions.discard(session_id)
+        return AzureCliCancelResponse(
+            session_id=session_id,
+            cancelled=True,
+            message="Test mode: session cancelled.",
+        )
     manager = get_cli_auth_manager()
     try:
         manager.get_session(session_id)

@@ -94,8 +94,8 @@ export default function App() {
       audioRef.current.src = ''
       audioRef.current = null
     }
-    // Slides 01, 02, 06, 09, 10, 11, 12 (0-indexed 0, 1, 5, 8, 9, 10, 11) are video slides
-    const VIDEO_SLIDES = [0, 1, 5, 8, 9, 10, 11]
+    // Slides with embedded presenter/demo videos should not also play narration audio.
+    const VIDEO_SLIDES = [0, 1, 3, 5, 6, 7, 8, 9, 10, 11, 12]
     if (VIDEO_SLIDES.includes(current)) return
 
     const slideNum = current + 1

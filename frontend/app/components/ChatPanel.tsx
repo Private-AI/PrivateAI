@@ -53,6 +53,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
   const creatingConvRef = useRef(false);
 
   const loadModels = useCallback(async () => {
+    if (!openwebuiUrl) return;
     setConnecting(true);
     setConnectionError(null);
     try {
@@ -71,6 +72,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
 
   // Load models + conversations on mount
   useEffect(() => {
+    if (!openwebuiUrl) return;
     loadModels();
     listConversations(openwebuiUrl).then(setConversations).catch(() => {});
   }, [openwebuiUrl, loadModels]);
@@ -356,7 +358,13 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
         <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 20 }}>
           {messages.length === 0 ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "40px 0" }}>
-              {connectionError && (
+              {!openwebuiUrl && (
+                <div style={{ marginBottom: 24, padding: "14px 20px", background: "rgba(99,102,241,0.07)", border: "1px solid rgba(99,102,241,0.2)", borderRadius: 12, maxWidth: 420, textAlign: "left" }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: COLORS.indigoLight, marginBottom: 4 }}>Test mode — no live chat</div>
+                  <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5 }}>Open WebUI is not running in test mode. All provisioning steps are simulated. Deploy to a real cloud VM to enable live chat.</div>
+                </div>
+              )}
+              {openwebuiUrl && connectionError && (
                 <div style={{ marginBottom: 24, padding: "14px 20px", background: "rgba(248,113,113,0.07)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 12, maxWidth: 420, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 4 }}>Could not reach Open WebUI</div>
                   <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5 }}>{connectionError}</div>

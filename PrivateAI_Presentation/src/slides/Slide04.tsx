@@ -50,7 +50,17 @@ export default function Slide04() {
         </div>
       </div>
 
-      <PresenterCam width={220} height={220} style={{ position: 'absolute', bottom: 60, right: 80 }} label="You" />
+      <PresenterCam
+        width={220}
+        height={220}
+        style={{ position: 'absolute', bottom: 60, right: 80 }}
+        videoSrc="/videos/Slide4.mp4"
+        videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+        muted={false}
+        loop={false}
+        logoPattern
+        onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+      />
       <SlideNum n={4} />
     </div>
   )

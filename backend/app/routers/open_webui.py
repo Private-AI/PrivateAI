@@ -22,6 +22,7 @@ from app.models.schemas import (
     OpenWebuiStatusResponse,
     OpenWebuiStopResponse,
 )
+from app.providers.registry import is_test_mode
 from app.services.open_webui_manager import get_open_webui_manager
 
 router = APIRouter(prefix="/api/v1/open-webui", tags=["open-webui"])
@@ -65,6 +66,12 @@ async def start_open_webui(request: OpenWebuiStartRequest | None = None):
     If Open WebUI is already running, returns the current state.
     """
     manager = get_open_webui_manager()
+    if is_test_mode():
+        return OpenWebuiStartResponse(
+            success=False,
+            message="Open WebUI is not available in test mode",
+            state=manager.get_state(),
+        )
     config = request.config if request else None
     state = await manager.start(config)
     return OpenWebuiStartResponse(
@@ -99,6 +106,12 @@ async def stop_open_webui():
 async def restart_open_webui(request: OpenWebuiStartRequest | None = None):
     """Restart Open WebUI, optionally with new configuration."""
     manager = get_open_webui_manager()
+    if is_test_mode():
+        return OpenWebuiStartResponse(
+            success=False,
+            message="Open WebUI is not available in test mode",
+            state=manager.get_state(),
+        )
     config = request.config if request else None
     state = await manager.restart(config)
     return OpenWebuiStartResponse(
@@ -153,6 +166,13 @@ async def connect_to_deployment(request: ConnectDeploymentRequest):
         )
     except RuntimeError as e:
         raise HTTPException(502, detail=str(e)) from e
+
+    if is_test_mode():
+        return OpenWebuiStartResponse(
+            success=True,
+            message=f"Connected to {request.deployment_name} (test mode — no live chat)",
+            state=state,
+        )
 
     return OpenWebuiStartResponse(
         success=state.status == "running",

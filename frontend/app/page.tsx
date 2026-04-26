@@ -50,6 +50,10 @@ export default function Home() {
     }
     if (page === "chat") {
       const url = localStorage.getItem("_privateai_chat_url") ?? "";
+      if (!url) {
+        setCurrentPage("dashboard");
+        return;
+      }
       setChatUrl(url);
     }
     setCurrentPage(page as Page);

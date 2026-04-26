@@ -1,4 +1,4 @@
-import { DemoVideo, GlowBlob, SectionTag, Sep, SlideNum } from '../components'
+import { DemoVideo, GlowBlob, PresenterCam, SectionTag, Sep, SlideNum } from '../components'
 
 export default function Slide11() {
   return (
@@ -28,10 +28,22 @@ export default function Slide11() {
 
         <DemoVideo
           label="Demo 3 - Dashboard"
-          videoSrc="/videos/demo3.webm"
+          videoSrc="/videos/Dashboard.mp4"
+          playbackRate={2.2}
           style={{ flex: 1, height: 700 }}
         />
       </div>
+
+      <PresenterCam
+        width={220}
+        height={220}
+        style={{ position: 'absolute', bottom: 60, left: 80 }}
+        videoSrc="/videos/Slide11.mp4"
+        videoStyle={{ objectFit: 'contain', objectPosition: 'center' }}
+        muted={false}
+        loop={false}
+        logoPattern
+      />
 
       <SlideNum n={11} />
     </div>

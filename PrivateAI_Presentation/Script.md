@@ -16,7 +16,7 @@ Today, using AI often means surrendering your privacy. Prompts can be logged, st
 
 ## Slide 4 - The Alternative, 15 seconds
 
-The alternative is self-hosting, and that is painful. You need cloud setup, GPU drivers, SSH keys, firewall rules, model installs, and security configuration. It takes days, and one mistake can expose everything.
+Setting up your own AI server means days of SSH keys, GPU drivers, and firewall configs. One mistake and your data is exposed anyway.
 
 ## Slide 5 - Vision, 10 seconds
 

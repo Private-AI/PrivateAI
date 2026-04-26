@@ -331,15 +331,18 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
             });
             ws.close();
 
-            // Navigate immediately — connection happens in background
-            onNavigate("chat");
+            // Connect Open WebUI, then navigate to chat if a URL is available.
+            // Falls back to dashboard when running in test mode (no live Open WebUI).
             connectOpenWebuiToDeployment(result.id, config.vm_name)
               .then((r) => {
                 if (r.success && r.state?.url) {
                   try { localStorage.setItem("_privateai_chat_url", r.state.url); } catch {}
+                  onNavigate("chat");
+                } else {
+                  onNavigate("dashboard");
                 }
               })
-              .catch(() => {});
+              .catch(() => { onNavigate("dashboard"); });
           }
           if (data.status === "failed") {
             setDeployFailed(true);

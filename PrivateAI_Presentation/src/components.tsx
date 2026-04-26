@@ -182,6 +182,8 @@ interface DemoVideoProps {
   label: string
   hint?: string
   videoSrc?: string
+  playbackRate?: number
+  autoAdvance?: boolean
   playColor?: string
   labelColor?: string
   playBtnStyle?: React.CSSProperties
@@ -190,23 +192,33 @@ interface DemoVideoProps {
 export function DemoVideo({
   label,
   videoSrc = '/videos/placeholder_video_sample.webm',
+  playbackRate = 1,
+  autoAdvance = true,
   style,
 }: DemoVideoProps) {
+  const videoType = videoSrc.endsWith('.mp4') ? 'video/mp4' : 'video/webm'
+
   return (
     <div
       className="demo-video"
       style={{ ...style, border: 'none', background: '#000', cursor: 'default', padding: 0 }}
     >
       <video
-        style={{ width: '100%', height: '100%', border: 'none', borderRadius: 20, objectFit: 'cover' }}
+        style={{ width: '100%', height: '100%', border: 'none', borderRadius: 20, objectFit: 'contain', background: '#000' }}
         autoPlay
+        muted
         preload="auto"
         playsInline
-        onEnded={() => window.dispatchEvent(new Event('privateai-media-ended'))}
+        onLoadedMetadata={(event) => {
+          event.currentTarget.playbackRate = playbackRate
+        }}
+        onEnded={() => {
+          if (autoAdvance) window.dispatchEvent(new Event('privateai-media-ended'))
+        }}
         title={label}
       >
-        <source src={videoSrc} type="video/webm" />
-        <source src={videoSrc.replace('.webm', '.mp4')} type="video/mp4" />
+        <source src={videoSrc} type={videoType} />
+        {videoSrc.endsWith('.webm') && <source src={videoSrc.replace('.webm', '.mp4')} type="video/mp4" />}
       </video>
     </div>
   )

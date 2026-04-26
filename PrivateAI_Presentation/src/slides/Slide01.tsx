@@ -29,7 +29,7 @@ export default function Slide01() {
           </p>
 
           <p className="reveal-left delay-3" style={{ fontSize: 22, color: 'var(--text3)', marginBottom: 40 }}>
-            Shabbir Kamal &nbsp;&middot;&nbsp; Zahead Rasheedi &nbsp;&middot;&nbsp; Chen-Ju Lin
+            Shabbir Kamal &nbsp;&middot;&nbsp; Zahead Rashidi &nbsp;&middot;&nbsp; Chen-Ju Lin
           </p>
 
           <div className="reveal-up delay-4" style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
