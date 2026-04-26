@@ -11,6 +11,11 @@ frontend/dist-electron
 frontend/.env.local
 frontend/.env*.local
 
+# Presentation
+PrivateAI_Presentation/node_modules/
+PrivateAI_Presentation/dist/
+PrivateAI_Presentation/tsconfig.tsbuildinfo
+
 # Python bytecode (recursive — catches all subdirectories)
 __pycache__/
 *.pyc
