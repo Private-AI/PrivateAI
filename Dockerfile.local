@@ -17,10 +17,6 @@ WORKDIR /app
 COPY backend/requirements.txt /tmp/backend-requirements.txt
 RUN pip install --no-cache-dir -r /tmp/backend-requirements.txt
 
-# ── Presentation Node deps (cached separately) ─────────────────────────
-COPY PrivateAI_Presentation/package.json /app/PrivateAI_Presentation/
-RUN cd /app/PrivateAI_Presentation && npm install
-
 # ── Frontend Node deps (cached separately) ────────────────────────────
 COPY frontend/package.json frontend/package-lock.json* /app/frontend/
 RUN cd /app/frontend && npm ci
@@ -28,13 +24,6 @@ RUN cd /app/frontend && npm ci
 # ── Source code ────────────────────────────────────────────────────────
 COPY backend/ /app/backend/
 COPY frontend/ /app/frontend/
-COPY PrivateAI_Presentation/ /app/PrivateAI_Presentation/
-
-# ── Build presentation → /app/frontend/public/deck ───────────────────��
-RUN cd /app/PrivateAI_Presentation && npm run build || echo "[skip] presentation build failed"
-# Copy media files (videos/audio) to frontend public so Next.js serves them
-RUN cp -r /app/PrivateAI_Presentation/public/videos /app/frontend/public/videos 2>/dev/null || true
-RUN cp -r /app/PrivateAI_Presentation/public/audio  /app/frontend/public/audio  2>/dev/null || true
 
 # ── Next.js production build ───────────────────────────────────────────
 ARG NEXT_PUBLIC_API_URL="http://localhost:8000"
