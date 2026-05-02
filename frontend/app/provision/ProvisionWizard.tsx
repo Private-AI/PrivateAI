@@ -118,10 +118,11 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
     }));
   }, []);
 
-  // Load providers
+  // Load providers — 8 s timeout so loading never gets stuck
   useEffect(() => {
     let cancelled = false;
     setProvidersLoading(true);
+    const timer = setTimeout(() => { if (!cancelled) setProvidersLoading(false); }, 8000);
     fetchProviders()
       .then((data) => {
         if (cancelled) return;
@@ -131,8 +132,8 @@ export default function ProvisionWizard({ onNavigate }: ProvisionWizardProps) {
         if (last) setSelectedProvider(last);
       })
       .catch((err: Error) => { if (!cancelled) setProvidersError(err.message); })
-      .finally(() => { if (!cancelled) setProvidersLoading(false); });
-    return () => { cancelled = true; };
+      .finally(() => { clearTimeout(timer); if (!cancelled) setProvidersLoading(false); });
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   // Load VM sizes when region or credentials change

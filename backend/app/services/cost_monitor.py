@@ -45,7 +45,7 @@ class CostMonitor:
         self._deployment_costs: dict[str, DeploymentCostRecord] = {}
         self._alerts: list[CostAlert] = []
         self._running = False
-        self._task: asyncio.Task[None] | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
         # Store a reference to the orchestrator lazily (avoids circular import)
         self._orchestrator: Any = None
 
@@ -216,40 +216,46 @@ class CostMonitor:
 
     # ── Background monitoring loop ───────────────────────────
 
-    def start(self) -> None:
-        """Start the background cost-monitoring loop."""
-        if self._running:
-            return
+    def start(self, loop: asyncio.AbstractEventLoop) -> None:
+        """Start the background monitor in a daemon thread."""
+        self._loop = loop
         self._running = True
-        self._task = asyncio.create_task(self._monitor_loop())
+        t = threading.Thread(target=self._thread_loop, daemon=True, name="cost-monitor")
+        t.start()
         logger.info("Cost monitor started (tick every %ds)", MONITOR_TICK_INTERVAL)
 
     def stop(self) -> None:
         """Stop the background loop."""
         self._running = False
-        if self._task:
-            self._task.cancel()
-            self._task = None
         logger.info("Cost monitor stopped")
 
-    async def _monitor_loop(self) -> None:
-        """Main tick loop: update costs, check thresholds, trigger actions."""
+    def _thread_loop(self) -> None:
+        """Runs in a daemon thread; tick is fully sync to avoid blocking the event loop."""
+        import time
         while self._running:
-            try:
-                await asyncio.sleep(MONITOR_TICK_INTERVAL)
-                await self._tick()
-            except asyncio.CancelledError:
+            time.sleep(MONITOR_TICK_INTERVAL)
+            if not self._running:
                 break
+            try:
+                actions = self._tick_sync()
+                # Fire async actions (WS broadcast / orchestrator) on the event loop
+                # without blocking this thread.
+                if actions and self._loop and self._loop.is_running():
+                    for action_args in actions:
+                        asyncio.run_coroutine_threadsafe(
+                            self._execute_budget_action(*action_args),
+                            self._loop,
+                        )
             except Exception:
                 logger.exception("Error in cost monitor tick")
 
-    async def _tick(self) -> None:
-        """Single monitoring tick."""
+    def _tick_sync(self) -> list[tuple[str, BudgetAction, CostAlert]]:
+        """Synchronous tick: update costs, check thresholds. Returns actions to execute."""
         actions_to_take: list[tuple[str, BudgetAction, CostAlert]] = []
 
         with self._lock:
             if not self._budget.enabled:
-                return
+                return actions_to_take
 
             total_accrued = 0.0
             total_hourly = 0.0
@@ -299,7 +305,6 @@ class CostMonitor:
                             BudgetAction.STOP,
                             BudgetAction.DESTROY,
                         ):
-                            # Collect all running deployments for shutdown
                             for rec in self._deployment_costs.values():
                                 if rec.is_running:
                                     actions_to_take.append(
@@ -348,9 +353,7 @@ class CostMonitor:
                 )
                 self._alerts.append(alert)
 
-        # ── Execute actions outside the lock ─────────────────
-        for deployment_id, action, alert in actions_to_take:
-            await self._execute_budget_action(deployment_id, action, alert)
+        return actions_to_take
 
     async def _execute_budget_action(
         self,

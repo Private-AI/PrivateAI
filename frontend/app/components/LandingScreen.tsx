@@ -3,10 +3,14 @@
 import { useState, useEffect } from "react";
 import { COLORS } from "../lib/colors";
 import { Logo, AzureLogo, AWSLogo, GCPLogo, Pill, Card, PrimaryButton, GhostButton } from "./ui";
+import { useWindowWidth } from "../lib/useWindowWidth";
 
-export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted: () => void; onSignIn?: () => void }) {
+export default function LandingScreen({ onGetStarted, onSignIn, onPresentation }: { onGetStarted: () => void; onSignIn?: () => void; onPresentation?: () => void }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setTimeout(() => setMounted(true), 50); }, []);
+
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
 
   const fade = (delay: number): React.CSSProperties => ({
     opacity: mounted ? 1 : 0,
@@ -18,24 +22,54 @@ export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted
     document.getElementById("how-it-works")?.scrollIntoView({ behavior: "smooth" });
   };
 
+  const orbSize = isMobile ? 180 : 280;
+  const ringInset1 = isMobile ? 13 : 20;
+  const ringInset2 = isMobile ? 26 : 40;
+  const logoSize = isMobile ? 90 : 140;
+
   return (
     <div style={{ minHeight: "100vh", background: COLORS.bg, overflowX: "hidden" }}>
-      <nav style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "24px 64px", position: "relative", zIndex: 10, ...fade(0) }}>
+      <nav style={{
+        display: "flex", alignItems: "center", justifyContent: "space-between",
+        padding: isMobile ? "16px 20px" : "24px 64px",
+        position: "relative", zIndex: 10, ...fade(0),
+      }}>
         <Logo />
-        <div style={{ display: "flex", gap: 8 }}>
-          <GhostButton onClick={onSignIn ?? onGetStarted} style={{ padding: "9px 20px", fontSize: 13 }}>Sign in</GhostButton>
-          <PrimaryButton onClick={onGetStarted} style={{ padding: "9px 20px", fontSize: 13 }}>Get started</PrimaryButton>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {onPresentation && (
+            <button
+              onClick={onPresentation}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 6,
+                color: COLORS.textMuted, fontSize: 13, fontFamily: "inherit",
+                padding: isMobile ? "8px 10px" : "9px 14px", borderRadius: 8,
+                transition: "color 0.15s, background 0.15s",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = COLORS.textSecondary; e.currentTarget.style.background = "rgba(255,255,255,0.04)"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = COLORS.textMuted; e.currentTarget.style.background = "none"; }}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <rect x="1" y="1" width="12" height="9" rx="1.5" stroke="currentColor" strokeWidth="1.2" />
+                <path d="M4 13H10M7 10V13" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" />
+              </svg>
+              {!isMobile && "Pitch deck"}
+            </button>
+          )}
+          <GhostButton onClick={onSignIn ?? onGetStarted} style={{ padding: isMobile ? "8px 14px" : "9px 20px", fontSize: 13 }}>Sign in</GhostButton>
+          <PrimaryButton onClick={onGetStarted} style={{ padding: isMobile ? "8px 14px" : "9px 20px", fontSize: 13 }}>Get started</PrimaryButton>
         </div>
       </nav>
 
-      <div style={{ textAlign: "center", padding: "60px 64px 0", position: "relative" }}>
+      <div style={{ textAlign: "center", padding: isMobile ? "40px 20px 0" : "60px 64px 0", position: "relative" }}>
         <div style={{ position: "absolute", top: 0, left: "50%", transform: "translateX(-50%)", width: 600, height: 600, background: "radial-gradient(circle, rgba(99,102,241,0.12) 0%, transparent 70%)", pointerEvents: "none" }} />
         <div style={{ position: "absolute", top: 100, left: "20%", width: 300, height: 300, background: "radial-gradient(circle, rgba(45,212,191,0.06) 0%, transparent 70%)", pointerEvents: "none" }} />
 
-        <div style={{ position: "relative", width: 280, height: 280, margin: "0 auto 48px", ...fade(100) }}>
+        <div style={{ position: "relative", width: orbSize, height: orbSize, margin: "0 auto 48px", ...fade(100) }}>
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "1px solid rgba(99,102,241,0.2)", animation: "pulse-ring 4s ease-in-out infinite" }} />
-          <div style={{ position: "absolute", inset: 20, borderRadius: "50%", border: "1px solid rgba(45,212,191,0.15)", animation: "pulse-ring 4s ease-in-out infinite 1.3s" }} />
-          <div style={{ position: "absolute", inset: 40, borderRadius: "50%", border: "1px solid rgba(167,139,250,0.12)", animation: "pulse-ring 4s ease-in-out infinite 2.6s" }} />
+          <div style={{ position: "absolute", inset: ringInset1, borderRadius: "50%", border: "1px solid rgba(45,212,191,0.15)", animation: "pulse-ring 4s ease-in-out infinite 1.3s" }} />
+          <div style={{ position: "absolute", inset: ringInset2, borderRadius: "50%", border: "1px solid rgba(167,139,250,0.12)", animation: "pulse-ring 4s ease-in-out infinite 2.6s" }} />
           <div style={{ position: "absolute", inset: 0, borderRadius: "50%", border: "1px dashed rgba(99,102,241,0.12)" }} />
 
           <div style={{ position: "absolute", top: "50%", left: "50%", marginTop: -6, marginLeft: -6 }}>
@@ -56,7 +90,7 @@ export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted
 
           <div style={{ position: "absolute", inset: 0, display: "flex", alignItems: "center", justifyContent: "center", animation: "pulse-core 3s ease-in-out infinite" }}>
             {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img src="/logos/logo-icon-transparent.svg" width={140} height={140} alt="PrivateAI" style={{ display: "block" }} />
+            <img src="/logos/logo-icon-transparent.svg" width={logoSize} height={logoSize} alt="PrivateAI" style={{ display: "block" }} />
           </div>
         </div>
 
@@ -67,7 +101,7 @@ export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted
         </div>
 
         <h1 style={{
-          fontSize: 72, fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.03em", margin: "0 0 24px",
+          fontSize: isMobile ? 38 : 72, fontWeight: 800, lineHeight: 1.05, letterSpacing: "-0.03em", margin: "0 0 24px",
           background: `linear-gradient(135deg, ${COLORS.textPrimary} 0%, ${COLORS.textPrimary} 40%, ${COLORS.indigo} 60%, ${COLORS.teal} 80%, ${COLORS.lavender} 100%)`,
           backgroundSize: "200% auto",
           WebkitBackgroundClip: "text",
@@ -79,15 +113,15 @@ export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted
           Your AI.<br />Completely private.
         </h1>
 
-        <p style={{ color: COLORS.textSecondary, fontSize: 20, lineHeight: 1.6, maxWidth: 560, margin: "0 auto 40px", fontWeight: 400, ...fade(250) }}>
+        <p style={{ color: COLORS.textSecondary, fontSize: isMobile ? 16 : 20, lineHeight: 1.6, maxWidth: 560, margin: "0 auto 40px", fontWeight: 400, ...fade(250) }}>
           Chat with powerful AI that runs on your own private cloud. No one can read your conversations. Ready in minutes, no tech skills needed.
         </p>
 
-        <div style={{ display: "flex", gap: 14, justifyContent: "center", marginBottom: 20, ...fade(300) }}>
-          <PrimaryButton onClick={onGetStarted} size="lg" style={{ fontSize: 16, padding: "16px 40px" }}>
+        <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: 14, justifyContent: "center", alignItems: "stretch", marginBottom: 20, ...fade(300) }}>
+          <PrimaryButton onClick={onGetStarted} size="lg" style={{ fontSize: isMobile ? 15 : 16, padding: isMobile ? "14px 28px" : "16px 40px" }}>
             Get started. It&apos;s easy
           </PrimaryButton>
-          <GhostButton onClick={scrollToHowItWorks} style={{ fontSize: 16, padding: "16px 32px" }}>
+          <GhostButton onClick={scrollToHowItWorks} style={{ fontSize: isMobile ? 15 : 16, padding: isMobile ? "14px 28px" : "16px 32px" }}>
             See how it works
           </GhostButton>
         </div>
@@ -96,30 +130,53 @@ export default function LandingScreen({ onGetStarted, onSignIn }: { onGetStarted
           Your conversations are never stored on our servers. Runs entirely on your own cloud account.
         </p>
 
-        <div style={{ display: "flex", gap: 24, justifyContent: "center", alignItems: "center", marginTop: 40, ...fade(400) }}>
+        {onPresentation && (
+          <div style={{ marginTop: 20, ...fade(370) }}>
+            <button
+              onClick={onPresentation}
+              style={{
+                background: "none", border: "none", cursor: "pointer",
+                display: "inline-flex", alignItems: "center", gap: 7,
+                color: COLORS.textMuted, fontSize: 13, fontFamily: "inherit",
+                padding: "6px 12px", borderRadius: 8,
+                transition: "color 0.15s",
+              }}
+              onMouseEnter={(e) => (e.currentTarget.style.color = COLORS.textSecondary)}
+              onMouseLeave={(e) => (e.currentTarget.style.color = COLORS.textMuted)}
+            >
+              <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
+                <circle cx="7" cy="7" r="6" stroke="currentColor" strokeWidth="1.3" />
+                <path d="M5.5 4.5L9.5 7L5.5 9.5V4.5Z" fill="currentColor" />
+              </svg>
+              Watch our 3-min pitch
+            </button>
+          </div>
+        )}
+
+        <div style={{ display: "flex", gap: isMobile ? 16 : 24, justifyContent: "center", alignItems: "center", marginTop: 40, flexWrap: "wrap", ...fade(400) }}>
           <span style={{ color: COLORS.textMuted, fontSize: 12, fontWeight: 500, letterSpacing: "0.06em", textTransform: "uppercase" }}>Works with</span>
           {[
-            { logo: <AzureLogo size={28} />, name: "Microsoft Azure" },
-            { logo: <AWSLogo size={28} />, name: "Amazon AWS" },
-            { logo: <GCPLogo size={28} />, name: "Google Cloud" },
+            { logo: <AzureLogo size={isMobile ? 22 : 28} />, name: "Microsoft Azure" },
+            { logo: <AWSLogo size={isMobile ? 22 : 28} />, name: "Amazon AWS" },
+            { logo: <GCPLogo size={isMobile ? 22 : 28} />, name: "Google Cloud" },
           ].map(({ logo, name }) => (
             <div key={name} style={{ display: "flex", alignItems: "center", gap: 8, opacity: 0.7 }}>
               {logo}
-              <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 500 }}>{name}</span>
+              {!isMobile && <span style={{ color: COLORS.textSecondary, fontSize: 13, fontWeight: 500 }}>{name}</span>}
             </div>
           ))}
         </div>
       </div>
 
-      <div id="how-it-works" style={{ padding: "100px 64px 80px", maxWidth: 1100, margin: "0 auto" }}>
+      <div id="how-it-works" style={{ padding: isMobile ? "60px 20px 40px" : "100px 64px 80px", maxWidth: 1100, margin: "0 auto" }}>
         <div style={{ textAlign: "center", marginBottom: 60, ...fade(450) }}>
           <span style={{ color: COLORS.teal, fontSize: 12, fontWeight: 700, letterSpacing: "0.12em", textTransform: "uppercase" }}>How it works</span>
-          <h2 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: 44, fontWeight: 700, color: COLORS.textPrimary, margin: "12px 0 0", letterSpacing: "-0.02em" }}>
+          <h2 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: isMobile ? 28 : 44, fontWeight: 700, color: COLORS.textPrimary, margin: "12px 0 0", letterSpacing: "-0.02em" }}>
             Up and running in minutes
           </h2>
         </div>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 24, ...fade(500) }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 24, ...fade(500) }}>
           {[
             {
               num: "01", title: "Choose your cloud",

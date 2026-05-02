@@ -5,7 +5,31 @@
       "Bash(git fetch *)",
       "Bash(npx tsc *)",
       "WebFetch(domain:docs.openwebui.com)",
-      "PowerShell(docker exec privateai-combined *)"
+      "PowerShell(docker exec privateai-combined *)",
+      "PowerShell(New-Item *)",
+      "PowerShell(az group create *)",
+      "PowerShell(az vm create *)",
+      "PowerShell(az group delete --name privateai-rg --yes --no-wait; az group create --name privateai-rg --location westus2 --output none; az vm create --resource-group privateai-rg --name privateai-server --image Ubuntu2204 --size Standard_D2s_v3 --admin-username azureuser --generate-ssh-keys --location westus2)",
+      "PowerShell(az group wait *)",
+      "PowerShell(az vm open-port *)",
+      "Bash(node_modules/.bin/tsc --noEmit)",
+      "Bash(node node_modules/typescript/bin/tsc --noEmit)",
+      "PowerShell(Set-Location \"C:\\\\Misc\\\\Projects\\\\MyPrivateAI\\\\PrivateAI\\\\frontend\"; $result = & node node_modules/typescript/bin/tsc --noEmit 2>&1; $result | Select-Object -First 100; Write-Host \"Exit: $LASTEXITCODE\")",
+      "PowerShell(Test-Path *)",
+      "PowerShell(npm *)",
+      "PowerShell(docker exec privateai-app-1 *)",
+      "Bash(docker exec *)",
+      "PowerShell(docker compose *)",
+      "Bash(docker compose *)",
+      "PowerShell(curl *)",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/health\"; Invoke-RestMethod -Uri \"http://localhost:8000/api/v1/deployments\")",
+      "PowerShell(Invoke-RestMethod -Uri \"http://localhost:8000/health\" -TimeoutSec 5)",
+      "PowerShell(netstat *)",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -TimeoutSec 5; Write-Output \"Status: $\\($r.StatusCode\\)\"; Write-Output \"Body: $\\($r.Content\\)\")",
+      "PowerShell($r = Invoke-WebRequest -Uri \"http://localhost:8000/health\" -TimeoutSec 10 -UseBasicParsing; \"Status: $\\($r.StatusCode\\)\"; \"Body: $\\($r.Content\\)\")",
+      "PowerShell(Test-NetConnection *)",
+      "Bash(git checkout *)",
+      "Bash(git add *)"
     ]
   }
 }

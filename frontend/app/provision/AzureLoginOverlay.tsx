@@ -69,8 +69,12 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
   // Start login on mount
   useEffect(() => {
     let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) { setErrorMsg("Backend did not respond. Please try again."); setState("error"); }
+    }, 12000);
     startAzureCliLogin()
       .then((data) => {
+        clearTimeout(timer);
         if (cancelled) return;
         setSessionId(data.session_id);
         setVerificationUrl(data.verification_url);
@@ -79,11 +83,12 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
         autoStart(data.verification_url, data.user_code);
       })
       .catch((err: Error) => {
+        clearTimeout(timer);
         if (cancelled) return;
         setErrorMsg(err.message);
         setState("error");
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   // Poll for status while waiting

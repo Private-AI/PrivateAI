@@ -1,0 +1,16 @@
+services:
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.local
+    ports:
+      - "3000:3000"   # Next.js frontend
+      - "8000:8000"   # FastAPI backend
+    environment:
+      - ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080
+      - OPEN_WEBUI_PUBLIC_URL=http://localhost:8080
+    volumes:
+      - open-webui-data:/app/open-webui-data
+
+volumes:
+  open-webui-data:

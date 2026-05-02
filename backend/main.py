@@ -6,6 +6,7 @@ Run with:
 
 import logging
 import os
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -27,6 +28,100 @@ logging.basicConfig(
     format="%(asctime)s %(levelname)-8s %(name)s — %(message)s",
 )
 
+log = logging.getLogger(__name__)
+
+
+# ── Background helpers ────────────────────────────────────────────────
+
+
+def _start_open_webui_thread(manager) -> None:
+    """Run in a daemon thread with its own event loop — no tasks on the uvicorn loop."""
+    import asyncio as _asyncio
+
+    async def _run():
+        from app.services.deployment_store import get_store
+
+        try:
+            state = await manager.start()
+            if state.status == "running":
+                log.info("Open WebUI ready at %s", state.url)
+                store = get_store()
+                running = [d for d in store.list_all() if d.status == "running" and d.public_ip]
+                if running:
+                    latest = max(running, key=lambda d: d.updated_at)
+                    ssh_key = latest.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
+                    vm_user = latest.provider_metadata.get("vm_user", "azureuser")
+                    ollama_url = f"http://{latest.public_ip}:11434"
+                    try:
+                        state = await manager.connect_to_deployment(
+                            deployment_id=latest.id,
+                            deployment_name=latest.config.vm_name,
+                            ollama_url=ollama_url,
+                            ssh_key_path=ssh_key,
+                            vm_user=vm_user,
+                        )
+                        log.info(
+                            "Auto-reconnected deployment %s via %s",
+                            latest.id[:8],
+                            state.config.ollama_base_urls,
+                        )
+                    except Exception as e:
+                        log.warning("Auto-reconnect tunnel failed: %s", e)
+            else:
+                log.info("Open WebUI not started at boot: %s", state.error or state.status)
+        except Exception:
+            log.exception("Background Open WebUI startup failed")
+
+    _asyncio.run(_run())
+
+
+# ── Lifespan ──────────────────────────────────────────────────────────
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    import asyncio
+
+    from app.providers.registry import is_test_mode
+    from app.services.cost_monitor import get_cost_monitor
+    from app.services.open_webui_manager import get_open_webui_manager
+
+    cost_monitor = get_cost_monitor()
+    manager = get_open_webui_manager()
+
+    loop = asyncio.get_event_loop()
+
+    # Start all background work as daemon threads — avoids blocking uvicorn
+    # 0.46 startup, which hangs when asyncio/anyio tasks are created during
+    # the lifespan coroutine before the yield.
+    cost_monitor.start(loop)
+    manager.start_health_loop()
+
+    if not is_test_mode():
+        import threading as _threading
+        _threading.Thread(
+            target=_start_open_webui_thread,
+            args=(manager,),
+            daemon=True,
+            name="owui-start",
+        ).start()
+
+    yield  # server runs here
+
+    # ── Shutdown ──────────────────────────────────────────────
+    try:
+        from app.services.azure_cli_auth import get_cli_auth_manager
+        from app.services.ssh_tunnel import get_tunnel_manager
+
+        cost_monitor.stop()
+        manager.stop_health_loop()
+        await manager.stop()
+        get_tunnel_manager().stop_all()
+        get_cli_auth_manager().shutdown()
+    except Exception:
+        log.exception("Error during shutdown")
+
+
 # ── App ───────────────────────────────────────────────────────────────
 
 app = FastAPI(
@@ -36,6 +131,7 @@ app = FastAPI(
         "Multi-cloud GPU VM provisioning API. "
         "Deploy private AI infrastructure on Azure (with GCP and AWS coming)."
     ),
+    lifespan=lifespan,
 )
 
 # ── CORS ──────────────────────────────────────────────────────────────
@@ -65,79 +161,6 @@ app.include_router(open_webui.router)
 app.include_router(providers.router)
 app.include_router(services.router)
 app.include_router(terminal.router)
-
-
-# ── Lifecycle events ──────────────────────────────────────────────────
-
-
-@app.on_event("startup")
-async def _startup() -> None:
-    import asyncio
-    from app.providers.registry import is_test_mode
-    from app.services.cost_monitor import get_cost_monitor
-    from app.services.open_webui_manager import get_open_webui_manager
-
-    get_cost_monitor().start()
-    manager = get_open_webui_manager()
-    manager.start_health_loop()
-    if not is_test_mode():
-        # Start Open WebUI in the background so it's ready before first user click.
-        # Skipped in test mode — no real Ollama backend to connect to.
-        asyncio.create_task(_start_open_webui(manager))
-
-
-async def _start_open_webui(manager) -> None:
-    import logging
-    from app.services.deployment_store import get_store
-
-    log = logging.getLogger(__name__)
-    state = await manager.start()
-    if state.status == "running":
-        log.info("Open WebUI ready at %s", state.url)
-        # Reconnect tunnel for the most recent running deployment
-        store = get_store()
-        running = [d for d in store.list_all() if d.status == "running" and d.public_ip]
-        if running:
-            latest = max(running, key=lambda d: d.updated_at)
-            ssh_key = latest.config.provider_options.get("ssh_key_path", "~/.ssh/id_ed25519")
-            vm_user = latest.provider_metadata.get("vm_user", "azureuser")
-            ollama_url = f"http://{latest.public_ip}:11434"
-            try:
-                state = await manager.connect_to_deployment(
-                    deployment_id=latest.id,
-                    deployment_name=latest.config.vm_name,
-                    ollama_url=ollama_url,
-                    ssh_key_path=ssh_key,
-                    vm_user=vm_user,
-                )
-                log.info(
-                    "Auto-reconnected deployment %s via %s",
-                    latest.id[:8],
-                    state.config.ollama_base_urls,
-                )
-            except Exception as e:
-                log.warning("Auto-reconnect tunnel failed: %s", e)
-    else:
-        log.warning("Open WebUI failed to start at startup: %s", state.error)
-
-
-@app.on_event("shutdown")
-async def _shutdown() -> None:
-    from app.services.azure_cli_auth import get_cli_auth_manager
-    from app.services.cost_monitor import get_cost_monitor
-    from app.services.open_webui_manager import get_open_webui_manager
-    from app.services.ssh_tunnel import get_tunnel_manager
-
-    get_cost_monitor().stop()
-
-    manager = get_open_webui_manager()
-    manager.stop_health_loop()
-    await manager.stop()
-
-    get_tunnel_manager().stop_all()
-
-    # Clean up any in-flight Azure CLI device-code sessions
-    get_cli_auth_manager().shutdown()
 
 
 # ── Root endpoints ────────────────────────────────────────────────────

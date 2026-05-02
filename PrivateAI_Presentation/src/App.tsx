@@ -15,7 +15,7 @@ const SPEAKER_NOTES = [
   "Now watch VM configuration, deployment, and the chat opening. We say hi.",
   "And this is the dashboard. Full control over every VM, live status, and a budget monitor with auto-shutdown.",
   "Legal firms reviewing privileged documents. Hospitals running AI diagnostics. Journalists protecting sources. Engineers with trade secrets. All of them, finally able to use AI safely.",
-  "We're Shabbir and Team PrivateAI. We got frustrated by this trade-off and built the bridge.",
+  "We are Team PrivateAI and we want to make PrivateAI accessible for everybody.",
   "Your data. Your models. Your conversations. Finally, actually private. Thank you.",
 ]
 

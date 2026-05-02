@@ -1,4 +1,4 @@
-import { GlowBlob, GridBg, Logo, Pill } from '../components'
+import { GlowBlob, GridBg, Logo } from '../components'
 
 export default function Slide14() {
   return (
@@ -14,7 +14,7 @@ export default function Slide14() {
         textAlign: 'center', height: '100%', padding: 80,
       }}>
         <div className="reveal-up" style={{ display: 'flex', alignItems: 'center', gap: 16, marginBottom: 60 }}>
-          <Logo size={104} />
+          <Logo size={104} variant="icon" />
         </div>
 
         <h1 className="reveal-up delay-1" style={{
@@ -27,12 +27,6 @@ export default function Slide14() {
         </h1>
 
         <p className="reveal-up delay-2" style={{ fontSize: 26, color: 'var(--text2)', marginBottom: 60 }}>Thank you.</p>
-
-        <div className="reveal-up delay-3" style={{ display: 'flex', gap: 20, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'center' }}>
-          <Pill variant="indigo" style={{ fontSize: 18, padding: '10px 24px' }}>🔗 privateai.app</Pill>
-          <Pill variant="teal"   style={{ fontSize: 18, padding: '10px 24px' }}>📧 hello@privateai.app</Pill>
-          <Pill variant="lav"    style={{ fontSize: 18, padding: '10px 24px' }}>🐦 @privateai</Pill>
-        </div>
       </div>
     </div>
   )

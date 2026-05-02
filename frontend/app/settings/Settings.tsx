@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { useWindowWidth } from "@/app/lib/useWindowWidth";
 import {
   IconSettings,
   IconTrash,
@@ -331,10 +332,13 @@ export default function Settings({ onNavigate: _onNavigate }: SettingsProps) {
   const creds: AzureCredentials | null = settings?.savedCredentials ?? null;
   const recentDeployments = history.slice(0, 5);
 
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
+
   if (!settings) return null;
 
   return (
-    <div style={{ maxWidth: 680, margin: "0 auto", padding: "40px 32px" }}>
+    <div style={{ maxWidth: 680, margin: "0 auto", padding: isMobile ? "20px 16px" : "40px 32px" }}>
 
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 32 }}>
@@ -376,8 +380,8 @@ export default function Settings({ onNavigate: _onNavigate }: SettingsProps) {
                   ["Client ID",       creds.client_id],
                   ["Client Secret",   creds.client_secret ? "••••••••" : "Not saved"],
                 ].map(([label, value]) => (
-                  <div key={label} style={{ display: "flex", gap: 16, alignItems: "baseline" }}>
-                    <span style={{ width: 110, flexShrink: 0, fontSize: 11, color: COLORS.textMuted }}>{label}</span>
+                  <div key={label} style={{ display: "flex", flexDirection: isMobile ? "column" : "row", gap: isMobile ? 2 : 16, alignItems: isMobile ? "flex-start" : "baseline" }}>
+                    <span style={{ width: isMobile ? "auto" : 110, flexShrink: 0, fontSize: 11, color: COLORS.textMuted }}>{label}</span>
                     <span style={{ fontSize: 12, color: COLORS.textSecondary, fontFamily: "monospace", wordBreak: "break-all" }}>{value}</span>
                   </div>
                 ))}
@@ -633,6 +637,7 @@ export default function Settings({ onNavigate: _onNavigate }: SettingsProps) {
                   key={d.id}
                   style={{
                     display: "flex", alignItems: "center", justifyContent: "space-between",
+                    flexWrap: "wrap", gap: 6,
                     padding: "10px 14px", borderRadius: 10,
                     background: "rgba(255,255,255,0.025)", border: `1px solid ${COLORS.border}`,
                   }}

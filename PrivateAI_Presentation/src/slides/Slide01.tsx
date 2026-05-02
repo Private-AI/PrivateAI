@@ -10,7 +10,7 @@ export default function Slide01() {
       <div className="slide-content" style={{ display: 'flex', alignItems: 'center', padding: '0 120px', gap: 80 }}>
         <div className="reveal-left" style={{ flex: 1, minWidth: 0 }}>
           <div className="delay-1" style={{ marginBottom: 60 }}>
-            <Logo size={88} />
+            <Logo size={88} variant="icon" />
           </div>
 
           <Pill variant="indigo" style={{ marginBottom: 32, fontSize: 17 }}>Hackathon Final Pitch</Pill>

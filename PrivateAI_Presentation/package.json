@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "postbuild": "node -e \"const {cpSync}=require('fs'),p=require('path');['videos','audio'].forEach(d=>{try{cpSync(p.join('public',d),p.join('..','frontend','public',d),{recursive:true,force:true});console.log('copied',d)}catch(e){console.warn('skip',d,e.message)}})\"",
     "preview": "vite preview"
   },
   "dependencies": {

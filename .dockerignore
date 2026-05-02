@@ -22,5 +22,6 @@ open-webui-data/
 .idea/
 *.log
 
-# Presentation (not part of the app)
-PrivateAI_Presentation/
+# Presentation — include source, exclude build artifacts
+PrivateAI_Presentation/node_modules/
+PrivateAI_Presentation/dist/

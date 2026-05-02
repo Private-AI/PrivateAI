@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { COLORS } from "../lib/colors";
 import { Logo } from "./ui";
 import { login } from "../lib/auth";
+import { useWindowWidth } from "../lib/useWindowWidth";
 
 interface LoginScreenProps {
   onLogin: () => void;
@@ -17,6 +18,8 @@ export default function LoginScreen({ onLogin, onBack }: LoginScreenProps) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const emailRef = useRef<HTMLInputElement>(null);
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
 
   useEffect(() => {
     setTimeout(() => setMounted(true), 40);
@@ -52,7 +55,7 @@ export default function LoginScreen({ onLogin, onBack }: LoginScreenProps) {
       {/* Nav */}
       <nav style={{
         display: "flex", alignItems: "center", justifyContent: "space-between",
-        padding: "24px 48px", zIndex: 10, ...fade(0),
+        padding: isMobile ? "16px 20px" : "24px 48px", zIndex: 10, ...fade(0),
       }}>
         <button type="button" onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", padding: 0 }}>
           <Logo />
@@ -87,7 +90,7 @@ export default function LoginScreen({ onLogin, onBack }: LoginScreenProps) {
           width: "100%", maxWidth: 420,
           background: COLORS.bgCard,
           border: `1px solid ${COLORS.border}`,
-          borderRadius: 24, padding: "40px 36px",
+          borderRadius: 24, padding: isMobile ? "28px 20px" : "40px 36px",
           ...fade(80),
         }}>
 

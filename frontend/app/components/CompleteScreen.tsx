@@ -3,6 +3,7 @@
 import { useState, useEffect } from "react";
 import { COLORS } from "../lib/colors";
 import { Logo, Card, PrimaryButton, TrustRow, Confetti } from "./ui";
+import { useWindowWidth } from "../lib/useWindowWidth";
 
 interface CompleteScreenProps {
   provider?: string;
@@ -11,6 +12,8 @@ interface CompleteScreenProps {
 }
 
 export default function CompleteScreen({ provider = "Microsoft Azure", model = "TinyLlama 1.1B", onStartChat }: CompleteScreenProps) {
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
   const [mounted, setMounted] = useState(false);
   const [showConfetti, setShowConfetti] = useState(false);
 
@@ -77,7 +80,7 @@ export default function CompleteScreen({ provider = "Microsoft Azure", model = "
   ];
 
   return (
-    <div style={{ minHeight: "100vh", background: COLORS.bg, display: "flex", flexDirection: "column", alignItems: "center", padding: "0 24px 80px" }}>
+    <div style={{ minHeight: "100vh", background: COLORS.bg, display: "flex", flexDirection: "column", alignItems: "center", padding: isMobile ? "0 16px 40px" : "0 24px 80px" }}>
       {showConfetti && <Confetti />}
 
       <nav style={{ width: "100%", maxWidth: 900, display: "flex", alignItems: "center", padding: "24px 0" }}>
@@ -109,7 +112,7 @@ export default function CompleteScreen({ provider = "Microsoft Azure", model = "
           </div>
         </div>
 
-        <h1 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: 54, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.1, margin: "0 0 20px", ...fade(100) }}>
+        <h1 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: isMobile ? 34 : 54, fontWeight: 800, letterSpacing: "-0.03em", lineHeight: 1.1, margin: "0 0 20px", ...fade(100) }}>
           <span style={{ color: COLORS.textPrimary }}>You&apos;re all set.</span><br />
           <span style={{
             background: `linear-gradient(135deg, ${COLORS.teal}, ${COLORS.indigo}, ${COLORS.lavender})`,
@@ -124,7 +127,7 @@ export default function CompleteScreen({ provider = "Microsoft Azure", model = "
           Everything is running securely in your own cloud. No one else has access — not us, not anyone.
         </p>
 
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 16, marginBottom: 40, ...fade(200) }}>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 16, marginBottom: isMobile ? 24 : 40, ...fade(200) }}>
           {featureCards.map((card, i) => (
             <Card key={i} style={{ textAlign: "center", padding: 24 }} hover={false}>
               <div style={{ display: "flex", justifyContent: "center", marginBottom: 16 }}>{card.illustration}</div>

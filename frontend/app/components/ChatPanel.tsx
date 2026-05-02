@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { COLORS } from "../lib/colors";
 import { Logo } from "./ui";
+import { useWindowWidth } from "../lib/useWindowWidth";
 import {
   fetchModels,
   sendChatMessage,
@@ -22,16 +23,27 @@ interface Message {
   fileRef?: { id: string; name: string };
 }
 
+const RETRY_DELAYS = [5, 10, 20, 40, 60];
+
 interface ChatPanelProps {
   openwebuiUrl: string;
   onClose: () => void;
 }
 
 export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
+
   const [input, setInput] = useState("");
   const [messages, setMessages] = useState<Message[]>([]);
   const [isStreaming, setIsStreaming] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Close sidebar by default on mobile (runs once after mount)
+  useEffect(() => {
+    if (isMobile) setSidebarOpen(false);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const [models, setModels] = useState<OWModel[]>([]);
   const [selectedModel, setSelectedModel] = useState<string>("");
@@ -43,11 +55,15 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
 
   const [searchQuery, setSearchQuery] = useState("");
 
+  const [retryCountdown, setRetryCountdown] = useState<number | null>(null);
+
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const isStreamingRef = useRef(false);
+  const retryIndexRef = useRef(0);
+  const retryTimerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   // Refs for synchronous conversation tracking — avoids stale closure on activeConvId state.
   const activeConvIdRef = useRef<string | null>(null);
   const creatingConvRef = useRef(false);
@@ -59,6 +75,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
     try {
       const data = await fetchModels(openwebuiUrl);
       setModels(data);
+      retryIndexRef.current = 0;
       const saved = localStorage.getItem("privateai_chat_model");
       const first = data[0]?.id ?? "";
       setSelectedModel(saved && data.find((m) => m.id === saved) ? saved : first);
@@ -84,6 +101,41 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
     return () => clearInterval(t);
   }, [connecting, connectionError, models.length, loadModels]);
 
+  // Auto-reconnect with exponential backoff when disconnected
+  useEffect(() => {
+    if (retryTimerRef.current) {
+      clearInterval(retryTimerRef.current);
+      retryTimerRef.current = null;
+    }
+    setRetryCountdown(null);
+
+    if (!connectionError || connecting) return;
+    if (retryIndexRef.current >= RETRY_DELAYS.length) return;
+
+    let remaining = RETRY_DELAYS[retryIndexRef.current];
+    setRetryCountdown(remaining);
+
+    retryTimerRef.current = setInterval(() => {
+      remaining -= 1;
+      if (remaining <= 0) {
+        clearInterval(retryTimerRef.current!);
+        retryTimerRef.current = null;
+        setRetryCountdown(null);
+        retryIndexRef.current += 1;
+        loadModels();
+      } else {
+        setRetryCountdown(remaining);
+      }
+    }, 1000);
+
+    return () => {
+      if (retryTimerRef.current) {
+        clearInterval(retryTimerRef.current);
+        retryTimerRef.current = null;
+      }
+    };
+  }, [connectionError, connecting, loadModels]);
+
   // Scroll to bottom on new messages
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -93,6 +145,11 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
     setSelectedModel(id);
     localStorage.setItem("privateai_chat_model", id);
   };
+
+  const handleManualRetry = useCallback(() => {
+    retryIndexRef.current = 0;
+    loadModels();
+  }, [loadModels]);
 
   const loadConversation = useCallback(async (conv: OWConversation) => {
     setActiveConvId(conv.id);
@@ -227,8 +284,22 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
 
   return (
     <div style={{ position: "fixed", inset: 0, zIndex: 50, display: "flex", background: COLORS.bg }}>
+      {/* Mobile sidebar backdrop */}
+      {isMobile && sidebarOpen && (
+        <div
+          onClick={() => setSidebarOpen(false)}
+          style={{ position: "absolute", inset: 0, zIndex: 9, background: "rgba(0,0,0,0.5)" }}
+        />
+      )}
+
       {/* Sidebar */}
-      <div style={{
+      <div style={isMobile ? {
+        position: "absolute", top: 0, bottom: 0, left: 0, zIndex: 10,
+        width: sidebarOpen ? 260 : 0, minWidth: 0, overflow: "hidden",
+        borderRight: sidebarOpen ? `1px solid ${COLORS.border}` : "none",
+        display: "flex", flexDirection: "column",
+        transition: "width 0.25s ease", background: COLORS.bg, flexShrink: 0,
+      } : {
         width: sidebarOpen ? 260 : 0, minWidth: 0, overflow: "hidden",
         borderRight: `1px solid ${COLORS.border}`, display: "flex", flexDirection: "column",
         transition: "width 0.3s ease", background: "rgba(255,255,255,0.015)", flexShrink: 0,
@@ -304,9 +375,16 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
       {/* Main area */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
         {/* Topbar */}
-        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 24px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: isMobile ? "12px 14px" : "14px 24px", borderBottom: `1px solid ${COLORS.border}`, flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <button onClick={() => setSidebarOpen((v) => !v)} style={{ background: "none", border: "none", cursor: "pointer", padding: 4, color: COLORS.textMuted }}>
+            <button onClick={() => setSidebarOpen((v) => !v)} style={{
+              background: isMobile ? "rgba(255,255,255,0.06)" : "none",
+              border: isMobile ? `1px solid ${COLORS.border}` : "none",
+              borderRadius: 8, cursor: "pointer",
+              padding: isMobile ? "8px 10px" : 4,
+              color: COLORS.textSecondary,
+              display: "flex", alignItems: "center", justifyContent: "center",
+            }}>
               <svg width="18" height="18" viewBox="0 0 18 18" fill="none"><line x1="2" y1="5" x2="16" y2="5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><line x1="2" y1="9" x2="16" y2="9" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /><line x1="2" y1="13" x2="16" y2="13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>
             </button>
 
@@ -319,6 +397,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
                   appearance: "none", background: "rgba(255,255,255,0.04)", border: `1px solid ${COLORS.border}`,
                   borderRadius: 8, padding: "6px 32px 6px 12px", color: COLORS.textPrimary, fontSize: 13, fontWeight: 500,
                   cursor: "pointer", outline: "none", fontFamily: "inherit",
+                  maxWidth: isMobile ? 140 : undefined,
                 }}
               >
                 {models.length === 0 && <option value="">No models available</option>}
@@ -346,16 +425,18 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
               </div>
             )}
             {!connecting && connectionError && (
-              <button onClick={loadModels} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 100, cursor: "pointer" }}>
-                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171" }} />
-                <span style={{ fontSize: 11, color: "#f87171", fontWeight: 600 }}>Disconnected · Retry</span>
+              <button onClick={handleManualRetry} style={{ display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", background: "rgba(248,113,113,0.08)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 100, cursor: "pointer" }}>
+                <div style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171", animation: retryCountdown !== null ? "pulse-core 1s infinite" : undefined }} />
+                <span style={{ fontSize: 11, color: "#f87171", fontWeight: 600 }}>
+                  {retryCountdown !== null ? `Retrying in ${retryCountdown}s` : "Disconnected · Retry"}
+                </span>
               </button>
             )}
           </div>
         </div>
 
         {/* Messages */}
-        <div style={{ flex: 1, overflowY: "auto", padding: "24px", display: "flex", flexDirection: "column", gap: 20 }}>
+        <div style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 12px" : "24px", display: "flex", flexDirection: "column", gap: 20 }}>
           {messages.length === 0 ? (
             <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", textAlign: "center", padding: "40px 0" }}>
               {!openwebuiUrl && (
@@ -368,7 +449,9 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
                 <div style={{ marginBottom: 24, padding: "14px 20px", background: "rgba(248,113,113,0.07)", border: "1px solid rgba(248,113,113,0.2)", borderRadius: 12, maxWidth: 420, textAlign: "left" }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "#f87171", marginBottom: 4 }}>Could not reach Open WebUI</div>
                   <div style={{ fontSize: 13, color: COLORS.textSecondary, lineHeight: 1.5 }}>{connectionError}</div>
-                  <button onClick={loadModels} style={{ marginTop: 10, background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 8, padding: "7px 14px", color: "#f87171", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>Retry connection</button>
+                  <button onClick={handleManualRetry} style={{ marginTop: 10, background: "rgba(248,113,113,0.12)", border: "1px solid rgba(248,113,113,0.25)", borderRadius: 8, padding: "7px 14px", color: "#f87171", fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: "inherit" }}>
+                    {retryCountdown !== null ? `Retrying in ${retryCountdown}s` : "Retry connection"}
+                  </button>
                 </div>
               )}
               <div style={{ marginBottom: 24, animation: "pulse-core 3s infinite" }}>
@@ -406,7 +489,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
                     </div>
                   )}
                   <div style={{
-                    maxWidth: "70%",
+                    maxWidth: isMobile ? "85%" : "70%",
                     background: msg.role === "user" ? COLORS.indigo : "rgba(255,255,255,0.05)",
                     border: `1px solid ${msg.role === "user" ? "transparent" : COLORS.border}`,
                     borderRadius: msg.role === "user" ? "18px 18px 4px 18px" : "4px 18px 18px 18px",
@@ -444,7 +527,7 @@ export default function ChatPanel({ openwebuiUrl, onClose }: ChatPanelProps) {
         </div>
 
         {/* Input */}
-        <div style={{ padding: "16px 24px 24px", flexShrink: 0 }}>
+        <div style={{ padding: isMobile ? "10px 12px 16px" : "16px 24px 24px", flexShrink: 0 }}>
           <div style={{ background: "rgba(255,255,255,0.04)", border: `1px solid ${COLORS.border}`, borderRadius: 16, overflow: "hidden", transition: "border-color 0.2s" }}
             onFocusCapture={(e) => (e.currentTarget.style.borderColor = COLORS.indigo)}
             onBlurCapture={(e) => (e.currentTarget.style.borderColor = COLORS.border)}
