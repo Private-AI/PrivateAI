@@ -21,7 +21,3 @@ open-webui-data/
 .vscode/
 .idea/
 *.log
-
-# Presentation — include source, exclude build artifacts
-PrivateAI_Presentation/node_modules/
-PrivateAI_Presentation/dist/
