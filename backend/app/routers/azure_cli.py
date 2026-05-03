@@ -43,6 +43,7 @@ from app.models.schemas import (
     AzureCliProvisionResponse,
     ErrorResponse,
 )
+from app.providers.registry import get_provider
 from app.providers.registry import is_test_mode
 from app.services.azure_cli_auth import (
     AuthStatus,
@@ -60,6 +61,11 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="azure-cli")
 
 # Active mock session ids (test mode only)
 _mock_sessions: set[str] = set()
+
+
+async def _validate_provisioned_credentials(creds: AzureCredentials) -> tuple[bool, str]:
+    provider = get_provider("azure")
+    return await provider.validate_credentials(creds)
 
 
 def _require_az() -> None:
@@ -230,15 +236,50 @@ async def provision_service_principal(
         # Idempotent: already provisioned — return the existing creds.
         creds = session.sp_credentials
     else:
-        try:
-            creds = await anyio.to_thread.run_sync(
-                session.create_service_principal,
-                request.name,
-                request.role,
+        attempt_names = [request.name, f"{request.name}-{session.id[:8]}"]
+        creds = None
+        last_error = ""
+
+        for idx, attempt_name in enumerate(attempt_names, start=1):
+            try:
+                candidate = await anyio.to_thread.run_sync(
+                    session.create_service_principal,
+                    attempt_name,
+                    request.role,
+                )
+            except Exception as e:
+                logger.exception("Service principal creation failed")
+                raise HTTPException(status_code=500, detail=str(e)) from e
+
+            candidate_creds = AzureCredentials(
+                subscription_id=candidate.subscription_id,
+                tenant_id=candidate.tenant_id,
+                client_id=candidate.client_id,
+                client_secret=candidate.client_secret,  # type: ignore[arg-type]
             )
-        except Exception as e:
-            logger.exception("Service principal creation failed")
-            raise HTTPException(status_code=500, detail=str(e)) from e
+            valid, message = await _validate_provisioned_credentials(candidate_creds)
+            if valid:
+                creds = candidate
+                break
+
+            last_error = message
+            logger.warning(
+                "Provisioned Azure credentials failed validation on attempt %d (%s): %s",
+                idx,
+                attempt_name,
+                message,
+            )
+            session.sp_credentials = None
+            session.status = AuthStatus.AUTHENTICATED
+
+        if creds is None:
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Azure service principal was created but its credentials could not be "
+                    f"validated. {last_error}"
+                ),
+            )
 
     # Persist the new credentials as the active Azure creds so the rest
     # of the PrivateAI provisioning flow can use them immediately.
