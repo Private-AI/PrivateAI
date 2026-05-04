@@ -32,9 +32,7 @@ No cloud expertise. No data on our servers. Hardware-level encryption.
 <br>
 <br>
 
-> ⚠️ **Experimental:** PrivateAI has been tested and is safe to use with Microsoft Azure.
-> It is still experimental software — we make no guarantees. Use at your own risk.
-
+> ⚠️ **Still Experimental:** PrivateAI has been tested and is safe to use with Microsoft Azure.
 </div>
 
 ---
