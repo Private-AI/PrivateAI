@@ -101,6 +101,21 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
         const status = await fetchAzureCliLoginStatus(sessionId);
         if (cancelled) return;
 
+        if (
+          status.status === "pending" &&
+          status.verification_url &&
+          status.user_code &&
+          (
+            status.verification_url !== verificationUrl ||
+            status.user_code !== userCode
+          )
+        ) {
+          setVerificationUrl(status.verification_url);
+          setUserCode(status.user_code);
+          setCountdown(900);
+          autoStart(status.verification_url, status.user_code);
+        }
+
         if (status.status === "authenticated" || status.status === "provisioned") {
           setState("creating");
           try {
@@ -132,7 +147,7 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
 
     const interval = setInterval(poll, 2500);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [state, sessionId]);
+  }, [state, sessionId, userCode, verificationUrl]);
 
   // Countdown timer
   useEffect(() => {

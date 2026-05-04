@@ -152,6 +152,9 @@ async def get_login_status(
             subscription_name="Mock Azure Subscription (Test Mode)",
             tenant_id="mock-tenant-id",
             user_name="testuser@example.com",
+            verification_url="https://microsoft.com/devicelogin",
+            user_code="TESTX1234",
+            message="Test mode device-code login.",
         )
     _require_az()
     manager = get_cli_auth_manager()
@@ -162,6 +165,7 @@ async def get_login_status(
 
     status = await anyio.to_thread.run_sync(session.poll_status)
     account = session.account
+    device_code = session.device_code
 
     return AzureCliLoginStatusResponse(
         session_id=session.id,
@@ -171,6 +175,9 @@ async def get_login_status(
         tenant_id=account.tenant_id if account else "",
         user_name=account.user_name if account else "",
         error=session.error,
+        verification_url=device_code.url if device_code else "",
+        user_code=device_code.code if device_code else "",
+        message=device_code.message if device_code else "",
     )
 
 
