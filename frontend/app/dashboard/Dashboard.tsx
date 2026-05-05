@@ -20,6 +20,7 @@ import {
   CostSummaryBar,
   useCostMonitor,
 } from "@/app/components/cost/CostMonitor";
+import { useWindowWidth } from "@/app/lib/useWindowWidth";
 import TerminalPanel from "@/app/components/TerminalPanel";
 import ChatPanel from "@/app/components/ChatPanel";
 import { COLORS } from "@/app/lib/colors";
@@ -342,7 +343,7 @@ interface CardActions {
 // Featured deployment card (primary / first running)
 // ---------------------------------------------------------------------------
 
-function FeaturedCard({ d, actions }: { d: DeploymentView; actions: CardActions }) {
+function FeaturedCard({ d, actions, isMobile }: { d: DeploymentView; actions: CardActions; isMobile: boolean }) {
   const { onRefresh, onStart, onStop, onDestroy, onOpenTerminal, onOpenChat,
           chatLoadingId, connectedDeploymentId, loadingAction } = actions;
 
@@ -356,7 +357,7 @@ function FeaturedCard({ d, actions }: { d: DeploymentView; actions: CardActions 
     <div style={{
       background: "linear-gradient(135deg, rgba(99,102,241,0.1) 0%, rgba(45,212,191,0.05) 100%)",
       border: "1px solid rgba(99,102,241,0.25)",
-      borderRadius: 20, padding: "28px 32px",
+      borderRadius: 20, padding: isMobile ? "20px 16px" : "28px 32px",
       position: "relative", overflow: "hidden",
     }}>
       {/* Radial glow */}
@@ -370,7 +371,7 @@ function FeaturedCard({ d, actions }: { d: DeploymentView; actions: CardActions 
         Active instance
       </div>
 
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 24 }}>
+      <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: "flex-start", gap: isMobile ? 16 : 24 }}>
 
         {/* VM icon + status dot */}
         <div style={{ position: "relative", flexShrink: 0 }}>
@@ -465,7 +466,7 @@ function FeaturedCard({ d, actions }: { d: DeploymentView; actions: CardActions 
         </div>
 
         {/* Action buttons */}
-        <div style={{ display: "flex", flexDirection: "column", gap: 8, flexShrink: 0, minWidth: 148 }}>
+        <div style={{ display: "flex", flexDirection: isMobile ? "row" : "column", flexWrap: "wrap", gap: 8, flexShrink: 0, minWidth: isMobile ? 0 : 148, width: isMobile ? "100%" : "auto" }}>
 
           {/* Connect & Chat */}
           {canChat && (
@@ -572,13 +573,14 @@ function FeaturedCard({ d, actions }: { d: DeploymentView; actions: CardActions 
 // ---------------------------------------------------------------------------
 
 function CompactRow({
-  d, index, actions, hovered, onHover,
+  d, index, actions, hovered, onHover, isMobile,
 }: {
   d: DeploymentView;
   index: number;
   actions: CardActions;
   hovered: boolean;
   onHover: (id: string | null) => void;
+  isMobile: boolean;
 }) {
   const { onStart, onStop, onDestroy, onOpenChat,
           chatLoadingId, connectedDeploymentId, loadingAction } = actions;
@@ -597,7 +599,7 @@ function CompactRow({
       onMouseEnter={() => onHover(d.id)}
       onMouseLeave={() => onHover(null)}
       style={{
-        display: "flex", alignItems: "center", gap: 16, padding: "14px 20px",
+        display: "flex", alignItems: "center", gap: isMobile ? 10 : 16, padding: isMobile ? "12px 12px" : "14px 20px",
         background: hovered ? "rgba(255,255,255,0.035)" : index % 2 === 0 ? "rgba(255,255,255,0.015)" : "transparent",
         borderTop: index > 0 ? `1px solid ${COLORS.border}` : "none",
         transition: "background 0.15s",
@@ -642,7 +644,7 @@ function CompactRow({
       {/* Actions */}
       <div style={{
         display: "flex", gap: 7, flexShrink: 0,
-        opacity: hovered ? 1 : 0.45, transition: "opacity 0.2s",
+        opacity: isMobile || hovered ? 1 : 0.45, transition: "opacity 0.2s",
       }}>
         {canChat && (
           <button
@@ -652,12 +654,12 @@ function CompactRow({
             style={{
               display: "flex", alignItems: "center", gap: 5,
               background: COLORS.indigo, border: "none", borderRadius: 8,
-              padding: "7px 14px", color: "white", fontSize: 12, fontWeight: 600,
+              padding: isMobile ? "7px 10px" : "7px 14px", color: "white", fontSize: 12, fontWeight: 600,
               cursor: isChatLoading ? "default" : "pointer", fontFamily: "inherit",
             }}
           >
             {isChatLoading ? <IconLoader size={12} className="animate-spin" style={{ color: "white" }} /> : <IconChat size={12} style={{ color: "white" }} />}
-            {isConnected ? "Chat" : "Connect"}
+            {!isMobile && (isConnected ? "Chat" : "Connect")}
           </button>
         )}
         {d.status === "stopped" && (
@@ -668,12 +670,12 @@ function CompactRow({
             style={{
               display: "flex", alignItems: "center", gap: 5,
               background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 8,
-              padding: "7px 12px", color: COLORS.textSecondary, fontSize: 12, fontWeight: 500,
+              padding: isMobile ? "7px 10px" : "7px 12px", color: COLORS.textSecondary, fontSize: 12, fontWeight: 500,
               cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
             }}
           >
             {loadingAction === "start" ? <IconLoader size={12} className="animate-spin" /> : <IconPlay size={12} />}
-            Start
+            {!isMobile && "Start"}
           </button>
         )}
         {d.status === "running" && (
@@ -684,12 +686,12 @@ function CompactRow({
             style={{
               display: "flex", alignItems: "center", gap: 5,
               background: "none", border: `1px solid ${COLORS.border}`, borderRadius: 8,
-              padding: "7px 12px", color: COLORS.textSecondary, fontSize: 12, fontWeight: 500,
+              padding: isMobile ? "7px 10px" : "7px 12px", color: COLORS.textSecondary, fontSize: 12, fontWeight: 500,
               cursor: loadingAction ? "default" : "pointer", fontFamily: "inherit",
             }}
           >
             {loadingAction === "stop" ? <IconLoader size={12} className="animate-spin" /> : <IconStop size={12} />}
-            Stop
+            {!isMobile && "Stop"}
           </button>
         )}
         <button
@@ -813,7 +815,9 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
       id: h.id, name: h.name, provider: h.provider, region: h.region, vm_size: h.vm_size,
       status: h.status, created_at: h.created_at, public_ip: h.public_ip, endpoints: h.endpoints, error: null,
     }));
-    if (fromHistory.length > 0) setDeployments(fromHistory);
+    // Show cached data and clear loading immediately — API call refreshes in background
+    setDeployments(fromHistory);
+    setLoading(false);
 
     try {
       const live = await fetchDeployments();
@@ -826,9 +830,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         updateDeploymentInHistory(v.id, { status: v.status, public_ip: v.public_ip ?? "", endpoints: v.endpoints ?? EMPTY_ENDPOINTS });
       }
     } catch {
-      // keep cached history
-    } finally {
-      setLoading(false);
+      // keep cached history already displayed
     }
   }, []);
 
@@ -960,13 +962,16 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
   const restDeployments = featuredDeployment ? deployments.filter((d) => d.id !== featuredDeployment.id) : [];
   const isEmpty = !loading && deployments.length === 0;
 
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
+
   return (
-    <div style={{ padding: "36px 40px", maxWidth: 960, margin: "0 auto" }}>
+    <div style={{ padding: isMobile ? "20px 16px" : "36px 40px", maxWidth: 960, margin: "0 auto" }}>
 
       {/* Header */}
-      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 28 }}>
+      <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 12, marginBottom: 28 }}>
         <div>
-          <h1 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: 28, fontWeight: 700, color: COLORS.textPrimary, letterSpacing: "-0.02em", margin: "0 0 6px" }}>
+          <h1 style={{ fontFamily: "var(--font-syne), Syne, sans-serif", fontSize: isMobile ? 22 : 28, fontWeight: 700, color: COLORS.textPrimary, letterSpacing: "-0.02em", margin: "0 0 6px" }}>
             Your Private AI
           </h1>
           <p style={{ color: COLORS.textSecondary, fontSize: 14, margin: 0 }}>
@@ -986,7 +991,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
             }}
           >
             {bulkDestroyLoading ? <IconLoader size={14} className="animate-spin" style={{ color: "#f87171" }} /> : <IconAlert size={14} />}
-            Destroy All Azure
+            {isMobile ? "Destroy All" : "Destroy All Azure"}
           </button>
           <button
             type="button"
@@ -1050,6 +1055,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
         <div style={{ marginTop: 24, animation: "fade-in 0.3s ease-out" }}>
           <FeaturedCard
             d={featuredDeployment}
+            isMobile={isMobile}
             actions={{
               onRefresh: handleRefresh, onStart: handleStart, onStop: handleStop, onDestroy: handleDestroy,
               onOpenTerminal: handleOpenTerminal, onOpenChat: handleConnectAndChat,
@@ -1074,22 +1080,24 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
               padding: "14px 20px", cursor: "pointer", transition: "all 0.2s", fontFamily: "inherit",
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+            <div style={{ display: "flex", alignItems: "center", gap: isMobile ? 8 : 12, flex: 1, minWidth: 0, overflow: "hidden" }}>
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0 }}>
                 <rect x="1" y="2" width="14" height="4" rx="1.5" stroke={COLORS.textMuted} strokeWidth="1.2"/>
                 <rect x="1" y="8" width="14" height="4" rx="1.5" stroke={COLORS.textMuted} strokeWidth="1.2"/>
               </svg>
-              <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.textSecondary }}>More deployments</span>
-              <div style={{ display: "flex", gap: 5 }}>
-                {restDeployments.map((d) => {
-                  const c = d.status === "running" ? "#4ade80" : d.status === "failed" ? "#f87171" : isTransient(d.status) ? COLORS.indigoLight : "#6b7280";
-                  return <div key={d.id} style={{ width: 8, height: 8, borderRadius: "50%", background: c, opacity: 0.85 }} />;
-                })}
-              </div>
-              <span style={{ fontSize: 12, color: COLORS.textMuted }}>{restDeployments.length} instance{restDeployments.length !== 1 ? "s" : ""}</span>
+              <span style={{ fontSize: 14, fontWeight: 600, color: COLORS.textSecondary, whiteSpace: "nowrap" }}>More deployments</span>
+              {!isMobile && (
+                <div style={{ display: "flex", gap: 5, flexShrink: 0 }}>
+                  {restDeployments.map((d) => {
+                    const c = d.status === "running" ? "#4ade80" : d.status === "failed" ? "#f87171" : isTransient(d.status) ? COLORS.indigoLight : "#6b7280";
+                    return <div key={d.id} style={{ width: 8, height: 8, borderRadius: "50%", background: c, opacity: 0.85 }} />;
+                  })}
+                </div>
+              )}
+              <span style={{ fontSize: 12, color: COLORS.textMuted, whiteSpace: "nowrap", flexShrink: 0 }}>{restDeployments.length} instance{restDeployments.length !== 1 ? "s" : ""}</span>
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ fontSize: 12, color: COLORS.textMuted }}>{moreExpanded ? "Collapse" : "Expand"}</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 8 }}>
+              {!isMobile && <span style={{ fontSize: 12, color: COLORS.textMuted }}>{moreExpanded ? "Collapse" : "Expand"}</span>}
               <svg width="16" height="16" viewBox="0 0 16 16" fill="none" style={{ transform: moreExpanded ? "rotate(180deg)" : "none", transition: "transform 0.3s ease" }}>
                 <path d="M4 6L8 10L12 6" stroke={COLORS.textMuted} strokeWidth="1.5" strokeLinecap="round"/>
               </svg>
@@ -1111,6 +1119,7 @@ export default function Dashboard({ onNavigate }: DashboardProps) {
                   }}
                   hovered={hoveredRowId === d.id}
                   onHover={setHoveredRowId}
+                  isMobile={isMobile}
                 />
               ))}
             </div>

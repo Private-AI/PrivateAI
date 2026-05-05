@@ -59,7 +59,13 @@ async def get_accessible_vm_sizes(provider: str, request: AccessibleVMSizeReques
     except KeyError as e:
         raise HTTPException(404, detail=str(e))
 
-    vm_sizes = await p.list_accessible_vm_sizes(request.region, request.credentials)
+    try:
+        vm_sizes = await p.list_accessible_vm_sizes(request.region, request.credentials)
+    except Exception as e:
+        raise HTTPException(
+            502,
+            detail=f"Could not determine accessible VM sizes for {provider}: {e}",
+        ) from e
     return VMSizeListResponse(vm_sizes=vm_sizes)
 
 

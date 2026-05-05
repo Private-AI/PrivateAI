@@ -381,6 +381,9 @@ class AzureCliLoginStatusResponse(BaseModel):
     tenant_id: str = ""
     user_name: str = ""
     error: str = ""
+    verification_url: str = ""
+    user_code: str = ""
+    message: str = ""
 
 
 class AzureCliProvisionRequest(BaseModel):

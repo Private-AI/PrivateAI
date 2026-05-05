@@ -40,6 +40,12 @@ SESSION_IDLE_TIMEOUT = 1800         # 30 min — abandoned sessions get GC'd
 # ── Regex ───────────────────────────────────────────────────────────────
 _DEVICE_CODE_RE = re.compile(r"code\s+([A-Z0-9]+)\s+to\s+authenticate")
 _DEVICE_URL_RE = re.compile(r"(https://\S*(?:devicelogin|/device)\S*)")
+_TENANT_WARNING_RE = re.compile(r"WARNING:\s+([0-9a-fA-F-]{36})\s+'[^']+'")
+_MFA_LOCATION_RETRY_MARKERS = (
+    "must use multi-factor authentication",
+    "because you moved to a new location",
+    "No subscriptions found",
+)
 
 
 @dataclass
@@ -89,6 +95,17 @@ def _parse_device_code(text: str) -> DeviceCodeInfo | None:
     return DeviceCodeInfo(url=url, code=code_match.group(1), message=text.strip())
 
 
+def _extract_retry_tenant(text: str) -> str | None:
+    """Extract the tenant Azure CLI recommends retrying against."""
+    match = _TENANT_WARNING_RE.search(text)
+    return match.group(1) if match else None
+
+
+def _should_retry_with_tenant(text: str) -> bool:
+    """Return True when CLI output matches the MFA + wrong-tenant failure mode."""
+    return all(marker in text for marker in _MFA_LOCATION_RETRY_MARKERS)
+
+
 # ── Session ─────────────────────────────────────────────────────────────
 
 
@@ -108,6 +125,8 @@ class _AzureCliSession:
     error: str = ""
     created_at: float = field(default_factory=time.time)
     last_accessed_at: float = field(default_factory=time.time)
+    retry_count: int = 0
+    retry_tenant_id: str = ""
     _drain_threads: list[threading.Thread] = field(default_factory=list)
     _lock: threading.RLock = field(default_factory=threading.RLock)
 
@@ -136,7 +155,20 @@ class _AzureCliSession:
         )
 
     # ---- Lifecycle -----------------------------------------------------
-    def start_login(self) -> DeviceCodeInfo:
+    def _spawn_login_process(self, tenant_id: str | None = None) -> subprocess.Popen[str]:
+        args = ["az", "login", "--use-device-code"]
+        if tenant_id:
+            args.extend(["--tenant", tenant_id])
+        return subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+            env=self.env(),
+        )
+
+    def start_login(self, tenant_id: str | None = None) -> DeviceCodeInfo:
         """Spawn ``az login --use-device-code`` and return the device code.
 
         The subprocess stays alive in the background until the user finishes
@@ -149,16 +181,14 @@ class _AzureCliSession:
                 raise RuntimeError("Login already in progress for this session")
 
             self.config_dir.mkdir(parents=True, exist_ok=True)
-            proc = subprocess.Popen(
-                ["az", "login", "--use-device-code"],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1,  # line-buffered
-                env=self.env(),
-            )
+            self.stderr_buffer = []
+            self.stdout_buffer = []
+            self.device_code = None
+            self.error = ""
+            proc = self._spawn_login_process(tenant_id)
             self.proc = proc
             self.status = AuthStatus.PENDING
+            self.retry_tenant_id = tenant_id or ""
 
             def _drain(pipe: Any, buffer: list[str]) -> None:
                 try:
@@ -217,6 +247,17 @@ class _AzureCliSession:
         )
         return code_info
 
+    def _restart_login_with_tenant(self, tenant_id: str) -> str:
+        """Retry login against a specific tenant after a wrong-tenant MFA failure."""
+        self._run_az(["logout"], check=False, timeout=30)
+        self.retry_count += 1
+        self.start_login(tenant_id=tenant_id)
+        self.error = (
+            "Azure required MFA in a different tenant. "
+            "PrivateAI restarted device-code login automatically."
+        )
+        return AuthStatus.PENDING
+
     def poll_status(self) -> str:
         """Non-blocking check of login progress.
 
@@ -238,10 +279,24 @@ class _AzureCliSession:
                 return AuthStatus.PENDING
 
             if ret != 0:
+                stderr = "".join(self.stderr_buffer)
+                retry_tenant = _extract_retry_tenant(stderr)
+                if (
+                    self.retry_count == 0
+                    and retry_tenant
+                    and _should_retry_with_tenant(stderr)
+                ):
+                    logger.info(
+                        "Retrying Azure device-code login against tenant %s for session %s",
+                        retry_tenant,
+                        self.id,
+                    )
+                    return self._restart_login_with_tenant(retry_tenant)
+
                 self.status = AuthStatus.FAILED
                 self.error = (
                     f"az login exited with code {ret}. "
-                    f"stderr={''.join(self.stderr_buffer)[-500:]!r}"
+                    f"stderr={stderr[-1000:]!r}"
                 )
                 return self.status
 

@@ -3,16 +3,19 @@
 import { useState, useEffect, useCallback } from "react";
 import { getDeploymentHistory, getSettings } from "./lib/storage";
 import { getSession, logout } from "./lib/auth";
+import { destroyManagedResources } from "./lib/api";
 import Sidebar from "./components/Sidebar";
 import LandingScreen from "./components/LandingScreen";
+import { useWindowWidth } from "./lib/useWindowWidth";
 import LoginScreen from "./components/LoginScreen";
 import CompleteScreen from "./components/CompleteScreen";
 import ChatPanel from "./components/ChatPanel";
 import Dashboard from "./dashboard/Dashboard";
 import ProvisionWizard from "./provision/ProvisionWizard";
 import Settings from "./settings/Settings";
+import PresentationScreen from "./components/PresentationScreen";
 
-type Page = "welcome" | "login" | "dashboard" | "provision" | "settings" | "complete" | "chat";
+type Page = "welcome" | "login" | "dashboard" | "provision" | "settings" | "complete" | "chat" | "presentation";
 
 export default function Home() {
   const [currentPage, setCurrentPage] = useState<Page>("welcome");
@@ -21,6 +24,8 @@ export default function Home() {
   const [ready, setReady] = useState(false);
   const [lastDeployInfo, setLastDeployInfo] = useState<{ provider: string; model: string }>({ provider: "Microsoft Azure", model: "" });
   const [chatUrl, setChatUrl] = useState("");
+  const windowWidth = useWindowWidth();
+  const isMobile = windowWidth < 768;
 
   useEffect(() => {
     const session = getSession();
@@ -65,13 +70,14 @@ export default function Home() {
 
   const handleLogin = useCallback(() => {
     setAuthed(true);
-    const history = getDeploymentHistory();
-    const settings = getSettings();
-    const isFirstRun = history.length === 0 && settings.savedCredentials === null;
-    setCurrentPage(isFirstRun ? "welcome" : "dashboard");
+    setCurrentPage("provision");
   }, []);
 
   const handleLogout = useCallback(() => {
+    // Grab credentials before logout() wipes them from settings
+    const creds = getSettings().savedCredentials ?? undefined;
+    // Fire destroy in background — backend continues even after logout
+    destroyManagedResources("azure", creds).catch(() => {});
     logout();
     setAuthed(false);
     setCurrentPage("welcome");
@@ -92,7 +98,7 @@ export default function Home() {
   if (!ready) return null;
 
   // Pages that show no sidebar
-  const noSidebar = !authed || currentPage === "welcome" || currentPage === "login" || currentPage === "complete" || currentPage === "chat";
+  const noSidebar = !authed || currentPage === "welcome" || currentPage === "login" || currentPage === "complete" || currentPage === "chat" || currentPage === "presentation";
   const showSidebar = !noSidebar;
 
   return (
@@ -108,13 +114,14 @@ export default function Home() {
 
       <main
         className="flex-1 overflow-y-auto transition-[margin-left] duration-300 ease-in-out"
-        style={{ marginLeft: showSidebar ? (sidebarCollapsed ? "64px" : "220px") : 0 }}
+        style={{ marginLeft: showSidebar && !isMobile ? (sidebarCollapsed ? "64px" : "220px") : 0 }}
       >
         <div key={currentPage} className="animate-[fade-in_0.2s_ease-out]">
           {currentPage === "welcome" && (
             <LandingScreen
               onGetStarted={handleGetStarted}
               onSignIn={authed ? undefined : handleSignIn}
+              onPresentation={() => setCurrentPage("presentation")}
             />
           )}
           {currentPage === "login" && (
@@ -135,6 +142,9 @@ export default function Home() {
           {currentPage === "settings" && <Settings onNavigate={handleNavigate} />}
           {currentPage === "chat" && (
             <ChatPanel openwebuiUrl={chatUrl} onClose={() => handleNavigate("dashboard")} />
+          )}
+          {currentPage === "presentation" && (
+            <PresentationScreen onClose={() => setCurrentPage(authed ? "dashboard" : "welcome")} />
           )}
         </div>
       </main>

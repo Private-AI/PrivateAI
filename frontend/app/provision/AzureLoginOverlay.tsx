@@ -69,8 +69,12 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
   // Start login on mount
   useEffect(() => {
     let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) { setErrorMsg("Backend did not respond. Please try again."); setState("error"); }
+    }, 12000);
     startAzureCliLogin()
       .then((data) => {
+        clearTimeout(timer);
         if (cancelled) return;
         setSessionId(data.session_id);
         setVerificationUrl(data.verification_url);
@@ -79,11 +83,12 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
         autoStart(data.verification_url, data.user_code);
       })
       .catch((err: Error) => {
+        clearTimeout(timer);
         if (cancelled) return;
         setErrorMsg(err.message);
         setState("error");
       });
-    return () => { cancelled = true; };
+    return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
   // Poll for status while waiting
@@ -95,6 +100,21 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
       try {
         const status = await fetchAzureCliLoginStatus(sessionId);
         if (cancelled) return;
+
+        if (
+          status.status === "pending" &&
+          status.verification_url &&
+          status.user_code &&
+          (
+            status.verification_url !== verificationUrl ||
+            status.user_code !== userCode
+          )
+        ) {
+          setVerificationUrl(status.verification_url);
+          setUserCode(status.user_code);
+          setCountdown(900);
+          autoStart(status.verification_url, status.user_code);
+        }
 
         if (status.status === "authenticated" || status.status === "provisioned") {
           setState("creating");
@@ -127,7 +147,7 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
 
     const interval = setInterval(poll, 2500);
     return () => { cancelled = true; clearInterval(interval); };
-  }, [state, sessionId]);
+  }, [state, sessionId, userCode, verificationUrl]);
 
   // Countdown timer
   useEffect(() => {

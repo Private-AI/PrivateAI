@@ -424,25 +424,23 @@ class OpenWebuiManager:
             return False
 
     def start_health_loop(self) -> None:
-        """Start background health-check loop (called at app startup)."""
-        if self._running:
-            return
+        """Start background health loop in a daemon thread."""
         self._running = True
-        self._health_task = asyncio.create_task(self._health_loop())
+        t = threading.Thread(target=self._health_thread, daemon=True, name="owui-health")
+        t.start()
 
     def stop_health_loop(self) -> None:
         """Stop background health loop."""
         self._running = False
-        if self._health_task:
-            self._health_task.cancel()
-            self._health_task = None
 
-    async def _health_loop(self) -> None:
-        """Periodically verify the Open WebUI process is alive."""
+    def _health_thread(self) -> None:
+        """Daemon thread: periodically verify the Open WebUI process is alive."""
+        import time as _time
         while self._running:
+            _time.sleep(HEALTH_CHECK_INTERVAL)
+            if not self._running:
+                break
             try:
-                await asyncio.sleep(HEALTH_CHECK_INTERVAL)
-
                 with self._lock:
                     if self._status != OpenWebuiStatus.RUNNING:
                         continue
@@ -455,8 +453,6 @@ class OpenWebuiManager:
                         self._process = None
                     logger.warning("Open WebUI process died: %s", self._error)
 
-            except asyncio.CancelledError:
-                break
             except Exception:
                 logger.exception("Error in Open WebUI health loop")
 

@@ -17,14 +17,14 @@ function ph(password: string): string {
 
 const USERS: User[] = [
   {
-    id: "demo-user",
-    email: "demo@example.com",
-    name: "Demo User",
-    ph: ph("REDACTED"),
+    id: "wsti-demo",
+    email: "demo@wsti.ai",
+    name: "WSTI Demo",
+    ph: ph("PrivateAI2026"),
   },
   {
     id: "admin",
-    email: "admin@example.com",
+    email: "admin@privateai.app",
     name: "Admin",
     ph: ph("admin"),
   },

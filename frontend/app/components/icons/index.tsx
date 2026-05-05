@@ -262,3 +262,13 @@ export function IconBell({ size, className, ...props }: IconProps) {
     </Icon>
   );
 }
+
+export function IconPresentation({ size, className, ...props }: IconProps) {
+  return (
+    <Icon size={size} className={className} {...props}>
+      <rect x="2" y="3" width="20" height="13" rx="2" />
+      <path d="M8 21l4-4 4 4" />
+      <path d="M12 17v4" />
+    </Icon>
+  );
+}

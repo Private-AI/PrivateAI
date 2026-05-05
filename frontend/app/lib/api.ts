@@ -455,6 +455,9 @@ export function fetchAzureCliLoginStatus(sessionId: string): Promise<{
   user_name?: string;
   subscription_name?: string;
   error?: string;
+  verification_url?: string;
+  user_code?: string;
+  message?: string;
 }> {
   return request(`/azure/cli/login/status?session_id=${encodeURIComponent(sessionId)}`);
 }

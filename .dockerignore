@@ -21,6 +21,3 @@ open-webui-data/
 .vscode/
 .idea/
 *.log
-
-# Presentation (not part of the app)
-PrivateAI_Presentation/
