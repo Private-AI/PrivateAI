@@ -259,10 +259,12 @@ async def provision_service_principal(
                 raise HTTPException(status_code=500, detail=str(e)) from e
 
             candidate_creds = AzureCredentials(
-                subscription_id=candidate.subscription_id,
-                tenant_id=candidate.tenant_id,
-                client_id=candidate.client_id,
-                client_secret=candidate.client_secret,  # type: ignore[arg-type]
+                **{
+                    "subscription_id": candidate.subscription_id,
+                    "tenant_id": candidate.tenant_id,
+                    "client_id": candidate.client_id,
+                    "client_secret": candidate.client_secret,
+                }
             )
             valid, message = await _validate_provisioned_credentials(candidate_creds)
             if valid:
@@ -292,23 +294,27 @@ async def provision_service_principal(
     # of the PrivateAI provisioning flow can use them immediately.
     try:
         azure_creds = AzureCredentials(
-            subscription_id=creds.subscription_id,
-            tenant_id=creds.tenant_id,
-            client_id=creds.client_id,
-            client_secret=creds.client_secret,  # type: ignore[arg-type]
+            **{
+                "subscription_id": creds.subscription_id,
+                "tenant_id": creds.tenant_id,
+                "client_id": creds.client_id,
+                "client_secret": creds.client_secret,
+            }
         )
         get_store().set_provider_credentials("azure", azure_creds)
     except Exception as e:  # non-fatal — frontend still gets the creds
         logger.warning("Could not persist Azure credentials to store: %s", e)
 
     return AzureCliProvisionResponse(
-        session_id=session.id,
-        status=AuthStatus.PROVISIONED,
-        client_id=creds.client_id,
-        client_secret=creds.client_secret,
-        tenant_id=creds.tenant_id,
-        subscription_id=creds.subscription_id,
-        display_name=creds.display_name,
+        **{
+            "session_id": session.id,
+            "status": AuthStatus.PROVISIONED,
+            "client_id": creds.client_id,
+            "client_secret": creds.client_secret,
+            "tenant_id": creds.tenant_id,
+            "subscription_id": creds.subscription_id,
+            "display_name": creds.display_name,
+        }
     )
 
 

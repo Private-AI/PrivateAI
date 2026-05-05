@@ -350,11 +350,13 @@ class _AzureCliSession:
         )
         sp_data = json.loads(result.stdout)
         creds = ServicePrincipalCredentials(
-            client_id=sp_data["appId"],
-            client_secret=sp_data["password"],
-            tenant_id=sp_data["tenant"],
-            subscription_id=account.subscription_id,
-            display_name=sp_data.get("displayName", name),
+            **{
+                "client_id": sp_data["appId"],
+                "client_secret": sp_data["password"],
+                "tenant_id": sp_data["tenant"],
+                "subscription_id": account.subscription_id,
+                "display_name": sp_data.get("displayName", name),
+            }
         )
 
         with self._lock:
