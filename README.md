@@ -429,7 +429,7 @@ PrivateAI/
 
 ## Testing
 
-Tests are organized into phases by cost and environment requirements. Phases 1 and 2 are free and run offline.
+Tests are organized into phases by cost and environment requirements. Phase 1 and Phase 2 are free and run offline.
 
 ```bash
 cd backend
