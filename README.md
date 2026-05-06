@@ -281,7 +281,7 @@ All services mount `./open-webui-data/` as a Docker volume for Open WebUI's pers
 
 ## Environment Variables
 
-Copy `backend/.env.example` to `backend/.env` for local development. For production deployments, copy `.env.prod.example` to `.env.prod` on your server.
+Copy `backend/.env.example` to `backend/.env` for local development.
 
 | Variable | Default | Description |
 |---|---|---|
@@ -387,8 +387,7 @@ PrivateAI/
 ├── docs/                              Guides, API spec, architecture docs
 │   └── videos/                        Demo screen recordings
 ├── docker-compose.yml                 Six service configurations
-├── Dockerfile                         Python 3.12 + Node 20 + Open WebUI venv
-└── Caddyfile                          Caddy reverse proxy config for production HTTPS
+└── Dockerfile                         Python 3.12 + Node 20 + Open WebUI venv
 ```
 
 ---
