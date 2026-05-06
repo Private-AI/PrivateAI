@@ -51,19 +51,19 @@ PrivateAI is a full-stack application that provisions and manages **private AI s
 
 ### Deploy — Zero to private AI
 
-<video src="https://raw.githubusercontent.com/Private-AI/PrivateAI/master/docs/videos/Deploy.mp4" controls width="100%"></video>
+<video src="https://github.com/Private-AI/PrivateAI/raw/master/docs/videos/Deploy.mp4" controls width="100%"></video>
 
 > *Walk through the provision wizard: choose a VM profile, enter Azure credentials, and watch the 13-step live deployment progress stream.*
 
 ### Connect & Chat — Fully private
 
-<video src="https://raw.githubusercontent.com/Private-AI/PrivateAI/master/docs/videos/Azure.mp4" controls width="100%"></video>
+<video src="https://github.com/Private-AI/PrivateAI/raw/master/docs/videos/Azure.mp4" controls width="100%"></video>
 
 > *Click "Connect & Chat" on a running deployment to open the embedded Open WebUI interface. Prompts go directly to your VM — nothing stored anywhere else.*
 
 ### Dashboard — Full control, zero surprises
 
-<video src="https://raw.githubusercontent.com/Private-AI/PrivateAI/master/docs/videos/Dashboard.mp4" controls width="100%"></video>
+<video src="https://github.com/Private-AI/PrivateAI/raw/master/docs/videos/Dashboard.mp4" controls width="100%"></video>
 
 > *Manage multiple deployments, watch the real-time cost monitor bar, set budget limits with auto-shutdown, and open an embedded SSH terminal — all without leaving the app.*
 
