@@ -1,12 +1,12 @@
 """Credential models for each cloud provider.
 
-Credentials are never persisted to disk — they live only in memory for the
-duration of the provisioning operation.
+Credentials are accepted per request and may be persisted in the local
+deployment store for restart durability.
 """
 
 from __future__ import annotations
 
-from typing import Annotated, Literal, Union
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, SecretStr
 
@@ -59,6 +59,6 @@ class AWSCredentials(BaseModel):
 
 # Discriminated union — the ``provider`` field selects the variant.
 Credentials = Annotated[
-    Union[AzureCredentials, GCPCredentials, AWSCredentials],
+    AzureCredentials | GCPCredentials | AWSCredentials,
     Field(discriminator="provider"),
 ]

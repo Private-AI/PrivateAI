@@ -13,10 +13,24 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.providers.registry import get_provider
+from app.services import deployment_store as deployment_store_module
+from app.services import orchestrator as orchestrator_module
 from app.services.orchestrator import get_orchestrator
 from main import app
 
 client = TestClient(app)
+
+
+@pytest.fixture(autouse=True)
+def isolated_deployment_store(monkeypatch, tmp_path):  # type: ignore[no-untyped-def]
+    """Keep API tests from writing credentials into the real local app state."""
+    store = deployment_store_module.DeploymentStore(tmp_path / "deployments.json")
+    monkeypatch.setattr(deployment_store_module, "_store_instance", store)
+    monkeypatch.setattr(
+        orchestrator_module,
+        "_orchestrator",
+        orchestrator_module.DeploymentOrchestrator(store),
+    )
 
 
 @pytest.mark.phase2

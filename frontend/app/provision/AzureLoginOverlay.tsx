@@ -69,13 +69,18 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
   // Start login on mount
   useEffect(() => {
     let cancelled = false;
+    let startedSessionId = "";
     const timer = setTimeout(() => {
       if (!cancelled) { setErrorMsg("Backend did not respond. Please try again."); setState("error"); }
     }, 12000);
     startAzureCliLogin()
       .then((data) => {
         clearTimeout(timer);
-        if (cancelled) return;
+        startedSessionId = data.session_id;
+        if (cancelled) {
+          cancelAzureCliLogin(data.session_id).catch(() => {});
+          return;
+        }
         setSessionId(data.session_id);
         setVerificationUrl(data.verification_url);
         setUserCode(data.user_code);
@@ -88,7 +93,11 @@ export default function AzureLoginOverlay({ onSuccess, onCancel }: Props) {
         setErrorMsg(err.message);
         setState("error");
       });
-    return () => { cancelled = true; clearTimeout(timer); };
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+      if (startedSessionId) cancelAzureCliLogin(startedSessionId).catch(() => {});
+    };
   }, []);
 
   // Poll for status while waiting

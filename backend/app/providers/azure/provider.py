@@ -17,7 +17,7 @@ import logging
 import os
 import re
 import subprocess
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -61,7 +61,6 @@ from azure.mgmt.resource import ResourceManagementClient
 from app.models.credentials import AzureCredentials, Credentials
 from app.models.deployment import (
     DeploymentConfig,
-    SecurityLevel,
     ServiceEndpoints,
     StepProgress,
 )
@@ -81,6 +80,8 @@ from app.providers.azure.vm_setup import (
 )
 from app.providers.base import (
     CloudProvider as CloudProviderBase,
+)
+from app.providers.base import (
     ProvisionResult,
     SetupResult,
     ValidationResult,
@@ -88,6 +89,7 @@ from app.providers.base import (
 )
 
 logger = logging.getLogger(__name__)
+_MASKED_SECRET_VALUE = "**********"
 
 
 # ── Provisioning step definitions ────────────────────────────────────
@@ -114,10 +116,16 @@ def _get_azure_credential(
     Returns ``(credential, subscription_id)``.
     """
     creds: AzureCredentials = credentials  # type: ignore[assignment]
+    client_secret = creds.client_secret.get_secret_value()
+    if client_secret == _MASKED_SECRET_VALUE:
+        raise ValueError(
+            "Azure client secret is a masked placeholder from old saved state. "
+            "Reconnect to Azure once so PrivateAI can store a fresh secret."
+        )
     credential = ClientSecretCredential(
         tenant_id=creds.tenant_id,
         client_id=creds.client_id,
-        client_secret=creds.client_secret.get_secret_value(),
+        client_secret=client_secret,
     )
     return credential, creds.subscription_id
 
@@ -281,7 +289,8 @@ class AzureProvider(CloudProviderBase):
                         )
                     elif profile.vcpus > family_cores_available:
                         availability_reason = (
-                            f"Requires {profile.vcpus} {profile.quota_family} family cores, but only "
+                            f"Requires {profile.vcpus} {profile.quota_family} family "
+                            "cores, but only "
                             f"{family_cores_available} are available in {region}."
                         )
 
@@ -351,7 +360,9 @@ class AzureProvider(CloudProviderBase):
             return {
                 "success": success,
                 "providers": results,
-                "message": "All providers registered." if success else "Some providers are still registering — retry in a moment.",
+                "message": "All providers registered."
+                if success
+                else "Some providers are still registering — retry in a moment.",
             }
 
         return await asyncio.to_thread(_setup)
@@ -398,7 +409,7 @@ class AzureProvider(CloudProviderBase):
 
         def _progress(idx: int, status: str, detail: str = "") -> None:
             steps[idx].status = status
-            now = datetime.now(timezone.utc)
+            now = datetime.now(UTC)
             if status == "in_progress":
                 steps[idx].started_at = now
             elif status in ("completed", "failed"):
@@ -563,7 +574,11 @@ class AzureProvider(CloudProviderBase):
                                 network_interfaces=[NetworkInterfaceReference(id=nic_result.id)],
                             ),
                             security_profile=security_profile,
-                            tags={"project": "privateai", "created-by": "privateai-backend", "vm-sku": sku},
+                            tags={
+                                "project": "privateai",
+                                "created-by": "privateai-backend",
+                                "vm-sku": sku,
+                            },
                         ),
                     ).result(timeout=900)
                     logger.info("VM created with SKU: %s", sku)

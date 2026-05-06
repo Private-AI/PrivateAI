@@ -28,6 +28,7 @@ All sessions are isolated — each gets its own AZURE_CONFIG_DIR under
 from __future__ import annotations
 
 import logging
+import time
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 
@@ -43,8 +44,7 @@ from app.models.schemas import (
     AzureCliProvisionResponse,
     ErrorResponse,
 )
-from app.providers.registry import get_provider
-from app.providers.registry import is_test_mode
+from app.providers.registry import get_provider, is_test_mode
 from app.services.azure_cli_auth import (
     AuthStatus,
     get_cli_auth_manager,
@@ -62,10 +62,43 @@ _EXECUTOR = ThreadPoolExecutor(max_workers=4, thread_name_prefix="azure-cli")
 # Active mock session ids (test mode only)
 _mock_sessions: set[str] = set()
 
+SP_VALIDATION_TIMEOUT = 90
+SP_VALIDATION_INTERVAL = 5
+
 
 async def _validate_provisioned_credentials(creds: AzureCredentials) -> tuple[bool, str]:
     provider = get_provider("azure")
     return await provider.validate_credentials(creds)
+
+
+async def _validate_provisioned_credentials_with_retry(
+    creds: AzureCredentials,
+    *,
+    timeout: int = SP_VALIDATION_TIMEOUT,
+    interval: int = SP_VALIDATION_INTERVAL,
+) -> tuple[bool, str]:
+    """Wait for a newly-created Entra app secret and RBAC grant to propagate."""
+    deadline = time.monotonic() + timeout
+    last_message = ""
+    attempt = 1
+
+    while True:
+        valid, message = await _validate_provisioned_credentials(creds)
+        if valid:
+            return True, message
+
+        last_message = message
+        if time.monotonic() >= deadline:
+            return False, last_message
+
+        logger.info(
+            "Waiting for Azure service-principal credentials to propagate "
+            "(attempt=%d): %s",
+            attempt,
+            message,
+        )
+        attempt += 1
+        await anyio.sleep(interval)
 
 
 def _require_az() -> None:
@@ -266,7 +299,7 @@ async def provision_service_principal(
                     "client_secret": candidate.client_secret,
                 }
             )
-            valid, message = await _validate_provisioned_credentials(candidate_creds)
+            valid, message = await _validate_provisioned_credentials_with_retry(candidate_creds)
             if valid:
                 creds = candidate
                 break

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { getDeploymentHistory, getSettings } from "./lib/storage";
-import { getSession, logout } from "./lib/auth";
+import { useState, useCallback } from "react";
+import { getSettings } from "./lib/storage";
+import { logout } from "./lib/auth";
 import { destroyManagedResources } from "./lib/api";
 import Sidebar from "./components/Sidebar";
 import LandingScreen from "./components/LandingScreen";
@@ -17,34 +17,16 @@ import PresentationScreen from "./components/PresentationScreen";
 
 type Page = "welcome" | "login" | "dashboard" | "provision" | "settings" | "complete" | "chat" | "presentation";
 
+const BYPASS_LOGIN = true;
+
 export default function Home() {
-  const [currentPage, setCurrentPage] = useState<Page>("welcome");
-  const [authed, setAuthed] = useState(false);
+  const [currentPage, setCurrentPage] = useState<Page>(BYPASS_LOGIN ? "dashboard" : "welcome");
+  const [authed, setAuthed] = useState(BYPASS_LOGIN);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
-  const [ready, setReady] = useState(false);
   const [lastDeployInfo, setLastDeployInfo] = useState<{ provider: string; model: string }>({ provider: "Microsoft Azure", model: "" });
   const [chatUrl, setChatUrl] = useState("");
   const windowWidth = useWindowWidth();
   const isMobile = windowWidth < 768;
-
-  useEffect(() => {
-    const session = getSession();
-    if (!session) {
-      // Not logged in — show public landing page
-      setCurrentPage("welcome");
-      setAuthed(false);
-      setReady(true);
-      return;
-    }
-
-    // Logged in — go to appropriate page
-    setAuthed(true);
-    const history = getDeploymentHistory();
-    const settings = getSettings();
-    const isFirstRun = history.length === 0 && settings.savedCredentials === null;
-    setCurrentPage(isFirstRun ? "welcome" : "dashboard");
-    setReady(true);
-  }, []);
 
   const handleNavigate = useCallback((page: string): void => {
     if (page === "complete") {
@@ -79,8 +61,8 @@ export default function Home() {
     // Fire destroy in background — backend continues even after logout
     destroyManagedResources("azure", creds).catch(() => {});
     logout();
-    setAuthed(false);
-    setCurrentPage("welcome");
+    setAuthed(BYPASS_LOGIN);
+    setCurrentPage(BYPASS_LOGIN ? "dashboard" : "welcome");
   }, []);
 
   const handleGetStarted = useCallback(() => {
@@ -94,8 +76,6 @@ export default function Home() {
   const handleSignIn = useCallback(() => {
     setCurrentPage("login");
   }, []);
-
-  if (!ready) return null;
 
   // Pages that show no sidebar
   const noSidebar = !authed || currentPage === "welcome" || currentPage === "login" || currentPage === "complete" || currentPage === "chat" || currentPage === "presentation";

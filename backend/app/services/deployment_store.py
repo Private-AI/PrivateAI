@@ -11,7 +11,7 @@ import logging
 import os
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from pydantic import TypeAdapter
 
@@ -34,6 +34,37 @@ _credentials_adapter = TypeAdapter(Credentials)
 _DEFAULT_PERSIST_PATH = Path(
     os.environ.get("OPEN_WEBUI_DATA_DIR", "/app/open-webui-data")
 ) / "deployments.json"
+_MASKED_SECRET_VALUE = "**********"
+
+
+def _to_plain_json(value: Any) -> Any:
+    """Convert Pydantic values to JSON-safe data without masking secrets."""
+    if hasattr(value, "get_secret_value"):
+        return value.get_secret_value()
+    if isinstance(value, dict):
+        return {key: _to_plain_json(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_to_plain_json(item) for item in value]
+    return value
+
+
+def _dump_credentials(credentials: Any) -> dict[str, Any] | None:
+    if not hasattr(credentials, "model_dump"):
+        return None
+    dumped = _to_plain_json(credentials.model_dump(mode="python"))
+    if not isinstance(dumped, dict):
+        return None
+    return cast(dict[str, Any], dumped)
+
+
+def _has_masked_secret(credentials: Any) -> bool:
+    for field_name in ("client_secret", "secret_access_key", "service_account_json"):
+        value = getattr(credentials, field_name, None)
+        if hasattr(value, "get_secret_value"):
+            value = value.get_secret_value()
+        if value == _MASKED_SECRET_VALUE:
+            return True
+    return False
 
 
 class DeploymentStore:
@@ -59,16 +90,28 @@ class DeploymentStore:
                     record = DeploymentRecord.model_validate(entry["record"])
                     self._records[record.id] = record
                     if entry.get("credentials"):
-                        self._credentials[record.id] = _credentials_adapter.validate_python(
-                            entry["credentials"]
-                        )
+                        credentials = _credentials_adapter.validate_python(entry["credentials"])
+                        if _has_masked_secret(credentials):
+                            logger.warning(
+                                "Skipping masked credentials for deployment %s",
+                                record.id,
+                            )
+                        else:
+                            self._credentials[record.id] = credentials
                 except Exception as e:
                     logger.warning("Skipping corrupt deployment record: %s", e)
             for provider_name, raw_credentials in data.get("provider_credentials", {}).items():
                 try:
-                    self._provider_credentials[provider_name] = _credentials_adapter.validate_python(
+                    credentials = _credentials_adapter.validate_python(
                         raw_credentials
                     )
+                    if _has_masked_secret(credentials):
+                        logger.warning(
+                            "Skipping masked provider credentials for %s",
+                            provider_name,
+                        )
+                    else:
+                        self._provider_credentials[provider_name] = credentials
                 except Exception as e:
                     logger.warning(
                         "Skipping corrupt provider credentials for %s: %s",
@@ -87,12 +130,12 @@ class DeploymentStore:
                 cred = self._credentials.get(dep_id)
                 entries.append({
                     "record": record.model_dump(mode="json"),
-                    "credentials": cred.model_dump(mode="json") if hasattr(cred, "model_dump") else None,
+                    "credentials": _dump_credentials(cred),
                 })
             provider_credentials = {
-                provider_name: credentials.model_dump(mode="json")
+                provider_name: dumped
                 for provider_name, credentials in self._provider_credentials.items()
-                if hasattr(credentials, "model_dump")
+                if (dumped := _dump_credentials(credentials)) is not None
             }
             self._persist_path.write_text(
                 json.dumps(
