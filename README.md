@@ -51,19 +51,19 @@ PrivateAI is a full-stack application that provisions and manages **private AI s
 
 ### Deploy — Zero to private AI
 
-<video src="docs/videos/Deploy.mp4" controls width="100%"></video>
+<video src="https://raw.githubusercontent.com/Private-AI/PrivateAI/master/docs/videos/Deploy.mp4" controls width="100%"></video>
 
 > *Walk through the provision wizard: choose a VM profile, enter Azure credentials, and watch the 13-step live deployment progress stream.*
 
 ### Connect & Chat — Fully private
 
-<video src="docs/videos/Azure.mp4" controls width="100%"></video>
+<video src="https://raw.githubusercontent.com/Private-AI/PrivateAI/master/docs/videos/Azure.mp4" controls width="100%"></video>
 
 > *Click "Connect & Chat" on a running deployment to open the embedded Open WebUI interface. Prompts go directly to your VM — nothing stored anywhere else.*
 
 ### Dashboard — Full control, zero surprises
 
-<video src="docs/videos/Dashboard.mp4" controls width="100%"></video>
+<video src="https://raw.githubusercontent.com/Private-AI/PrivateAI/master/docs/videos/Dashboard.mp4" controls width="100%"></video>
 
 > *Manage multiple deployments, watch the real-time cost monitor bar, set budget limits with auto-shutdown, and open an embedded SSH terminal — all without leaving the app.*
 
@@ -85,22 +85,6 @@ PrivateAI is a full-stack application that provisions and manages **private AI s
 | 🔌 | **Provider pattern** — clean abstraction layer ready for AWS and GCP backends |
 
 ---
-
-## Supported Infrastructure
-
-> **Currently supported: Microsoft Azure.** AWS and GCP providers are planned.
-
-| Profile | GPU | vCPUs | RAM | Est. $/hr | Confidential Computing | Use Case |
-|---------|-----|:-----:|:---:|:---------:|:----------------------:|----------|
-| **NVIDIA H100** | H100 80GB HBM3 | 40 | 320 GB | ~$35.00 | ✅ AMD SEV-SNP | Production inference with full memory encryption |
-| **NVIDIA A100** | A100 80GB | 24 | 220 GB | ~$3.67 | — | Large model inference |
-| **NVIDIA T4** | T4 16GB | 4 | 28 GB | ~$0.53 | — | Budget GPU inference |
-| **Test VM** | None | 2 | 8 GB | ~$0.10 | — | UI testing, small models, pipeline dev |
-
-Pricing is estimated and varies by Azure region. The cost monitor tracks your actual spend in real-time.
-
----
-
 ## Architecture
 
 ```
