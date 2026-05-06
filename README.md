@@ -14,7 +14,7 @@ No cloud expertise. No data on our servers. Hardware-level encryption.
 
 <br>
 
-[![GitHub Stars](https://img.shields.io/github/stars/Aheadz/PrivateAI?style=flat-square&color=6366f1&logo=github)](https://github.com/Aheadz/PrivateAI/stargazers)
+[![GitHub Stars](https://img.shields.io/github/stars/PrivateAI/PrivateAI?style=flat-square&color=6366f1&logo=github)](https://github.com/PrivateAI/PrivateAI/stargazers)
 [![License](https://img.shields.io/badge/license-MIT-6366f1?style=flat-square)](LICENSE)
 [![Docker](https://img.shields.io/badge/Docker-ready-2496ED?style=flat-square&logo=docker&logoColor=white)](docker-compose.yml)
 [![FastAPI](https://img.shields.io/badge/FastAPI-backend-009688?style=flat-square&logo=fastapi&logoColor=white)](backend/)
